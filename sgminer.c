@@ -5596,33 +5596,7 @@ retry:
         wlogprint("MINER : %02x|%02x|%02x|%02x|%02x|%02x|%02x|%d\n",
                   miner->asic_count_r, miner->fw_ver, miner->hw_ver, miner->asic_ver, (miner->clock / 10), miner->bbg, hw_errors_bkl, miner->error); 
         
-        for (unit_id = 0; unit_id < BAIKAL_MAXUNIT; unit_id++) {            
-            for (chip_id = 0; chip_id < BAIKAL_MAXASICS; chip_id++) {                
-                if (chip_id == (BAIKAL_MAXASICS/2)) {
-                    selected = curses_int("Press Enter");
-                }
-                switch (unit_id) {
-                case 0:
-                    sprintf(su, "%s", ((chip_id < 8) ? "A1" : "A2"));
-                    break;
-                case 1:
-                    sprintf(su, "%s", ((chip_id < 8) ? "A3" : "A4"));
-                    break;
-                case 2:
-                    sprintf(su, "%s", ((chip_id < 8) ? "B1" : "B2"));
-                    break;
-                case 3:
-                    sprintf(su, "%s", ((chip_id < 8) ? "B3" : "B4"));
-                default:
-                    break;
-                }
-                wlogprint("[%s][%d] [U:%d][C:%2d] : [:%6d:%6d]\n", su, chip_id % 8 + 1, unit_id, chip_id, 
-                          miner->asics[unit_id][chip_id].nonce, miner->asics[unit_id][chip_id].error);                
-            }
-            selected = curses_int("Press Enter");
-        }
 
-        goto retry;
     }
 #endif
     else
