@@ -33,7 +33,6 @@
 #define BAIKAL_GPIO_RESET_CUBE  "/sys/class/gpio_sw/PA10/data"   // orange pi zero
 #define BAIKAL_GPIO_EXIST_CUBE  "/sys/class/gpio_sw/PA19/data"
 
-static int api_clock = BAIKAL_CLK_DEF;
 
 
 #ifndef LINUX
@@ -176,7 +175,7 @@ static int baikal_sendmsg(struct cgpu_info *baikal, baikal_msg *msg)
 {
     int i, pos = 0;
     int amount;
-    uint8_t buf[512] = {0, };
+    uint8_t buf[256] = {0, };
 
     buf[pos++] = ':';
     buf[pos++] = msg->miner_id;
@@ -356,11 +355,11 @@ static bool baikal_getinfo(struct cgpu_info *baikal)
 
     miner->fw_ver       = msg.data[0];
     miner->hw_ver       = msg.data[1];
-    miner->bbg          = msg.data[2];
-    miner->clock        = msg.data[3] << 1;
+    miner->bbg          = msg.data[6];
+    miner->clock        = msg.data[3];
     miner->asic_count   = msg.data[4];
     miner->asic_count_r = msg.data[5];
-    miner->asic_ver     = msg.data[6]; 
+    miner->asic_ver     = msg.data[2]; 
     miner->working_diff = 0.1;
     miner->work_idx     = 0;
     miner->working      = true;
@@ -671,12 +670,12 @@ static void baikal_checknonce(struct cgpu_info *baikal, baikal_msg *msg)
     }
 
     if (submit_nonce(mining_thr[miner->thr_id], miner->works[work_idx], nonce) == true) {
-        miner->asics[unit_id][chip_id].nonce++;
+        miner->asics[unit_id].nonce++;
         miner->nonce++;
     }
     else {
         applog(LOG_ERR, "hw error : %d[u:%d, c:%2d] : [%3d, %08x]", msg->miner_id, unit_id, chip_id, work_idx, nonce);
-        miner->asics[unit_id][chip_id].error++;
+        miner->asics[unit_id].error++;
 		//miner->asics[unit_id][chip_id].nonce++;
         miner->error++;
         //hw_errors_bkl++;
@@ -727,7 +726,7 @@ static bool baikal_send_work(struct cgpu_info *baikal, int miner_id)
     //work->device_diff = MIN(miner->working_diff, work->work_difficulty);
     set_target(work->device_target, work->device_diff, work->pool->algorithm.diff_multiplier2, work->thr_id);
 
-    memset(msg.data, 0x0, 512);
+    memset(msg.data, 0x0, 256);
     msg.data[0] = to_baikal_algorithm(work->pool->algorithm.type);
     msg.data[1] = miner_id;
     memcpy(&msg.data[2], &work->device_target[24], 8);    

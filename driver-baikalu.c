@@ -26,16 +26,13 @@
 #include "compat.h"
 #include "algorithm.h"
 
-int thecounter = 0; // Added for debug 26.03.18
-
-static int api_clock = BAIKAL_CLK_DEF;
 
 static int baikal_sendmsg(struct cgpu_info *baikal, baikal_msg *msg)
 {
     int err;
     int i, pos = 0;
     int amount;
-    uint8_t buf[512] = {0, };
+    uint8_t buf[256] = {0, };
 
     buf[pos++] = ':';
     buf[pos++] = msg->miner_id;
@@ -214,11 +211,11 @@ static bool baikal_getinfo(struct cgpu_info *baikal)
 
     miner->fw_ver       = msg.data[0];
     miner->hw_ver       = msg.data[1];
-    miner->bbg          = msg.data[2];
-    miner->clock        = msg.data[3] << 1;
+    miner->bbg          = msg.data[6];
+    miner->clock        = msg.data[3];
     miner->asic_count   = msg.data[4];
     miner->asic_count_r = msg.data[5];
-    miner->asic_ver     = msg.data[6];
+    miner->asic_ver     = msg.data[2];
     miner->working_diff = 0.1;
     miner->work_idx     = 0;
     miner->working      = true;
@@ -533,12 +530,12 @@ static void baikal_checknonce(struct cgpu_info *baikal, baikal_msg *msg)
 
     if (submit_nonce(mining_thr[miner->thr_id], miner->works[work_idx], nonce) == true) {
 		//applog(LOG_ERR, "stale : %d[u:%d, c:%2d] : [%3d, %08x]", msg->miner_id, unit_id, chip_id, work_idx, nonce);
-        miner->asics[unit_id][chip_id].nonce++;
+        miner->asics[unit_id].nonce++;
         miner->nonce++;
     }
     else {
         applog(LOG_ERR, "hw error : %d[u:%d, c:%2d] : [%3d, %08x]", msg->miner_id, unit_id, chip_id, work_idx, nonce);
-        miner->asics[unit_id][chip_id].error++;
+        miner->asics[unit_id].error++;
 		//miner->asics[unit_id][chip_id].nonce++;
         miner->error++;
         hw_errors_bkl++;
@@ -821,8 +818,7 @@ static int64_t baikal_hash_done(struct cgpu_info *baikal, struct miner_info *min
     case ALGO_PASCAL:
         hash_done *= 500; // hash_done = miner->clock * miner->asic_count * elpased * 512; 
         break;
-    }
-	thecounter++;  // Added for debug 26.03.18
+   }
     return hash_done;
 }
 

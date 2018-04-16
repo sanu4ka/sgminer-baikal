@@ -1383,44 +1383,33 @@ static algorithm_settings_t algos[] = {
 #endif  // USE_GPU
 
 #ifdef USE_BAIKAL
-static algorithm_settings_t algos[] = {  
-#if BAIKAL_TYPE & BAIKAL_1772
-  { "quark",              ALGO_QUARK,            "",          256,          256,          256, 0, 0, 0xFF, 0xFFFFFFULL, 0x0000ffffUL,  0,            0,          quarkcoin_regenhash,               NULL,                   NULL, gen_hash },
-  { "qubit",              ALGO_QUBIT,            "",          256,          256,          256, 0, 0, 0xFF, 0xFFFFFFULL, 0x0000ffffUL,  0,            0,          qubitcoin_regenhash,               NULL,                   NULL, gen_hash },
-  { "x11",                ALGO_X11,              "",            1,            1,            1, 0, 0, 0xFF,   0xFFFFULL, 0x0000ffffUL,  0,            0,           darkcoin_regenhash,               NULL,                   NULL, gen_hash },   
+static algorithm_settings_t algos[] = {
+  { "quark",        ALGO_QUARK,     "", 256, 256, 256, 0, 0, 0xFF,      0xFFFFFFULL, 0x0000ffffUL, 0,                 0, quarkcoin_regenhash,   NULL, NULL, gen_hash },
+  { "qubit",        ALGO_QUBIT,     "", 256, 256, 256, 0, 0, 0xFF,      0xFFFFFFULL, 0x0000ffffUL, 0,                 0, qubitcoin_regenhash,   NULL, NULL, gen_hash },
+  { "x11",          ALGO_X11,       "",    1,  1,  1,  0, 0, 0xFF,      0xFFFFULL,   0x0000ffffUL, 0,                 0, darkcoin_regenhash,    NULL, NULL, gen_hash }, 
+  { "x13",          ALGO_X13,       "",    1,  1,  1,  0, 0, 0xFF,      0xFFFFULL,   0x0000ffffUL, 0,                 0, marucoin_regenhash,    NULL, NULL, gen_hash },  
+  { "x14",          ALGO_X14,       "",    1,  1,  1,  0, 0, 0xFF,      0xFFFFULL,   0x0000ffffUL, 13, 8 * 16 * 4194304, x14_regenhash,         NULL, NULL, gen_hash },
+  { "x15",          ALGO_X15,       "",    1,  1,  1,  0, 0, 0xFF,      0xFFFFULL,   0x0000ffffUL, 14, 4 * 16 * 4194304, bitblock_regenhash,    NULL, NULL, gen_hash },
   { "skein-sha256",       ALGO_SKEINCOIN,        "",            1,            1,            1, 0, 0, 0xFF,   0xFFFFULL, 0x000000ffUL,  0,          128,          skeincoin_regenhash,               NULL, skeincoin_prepare_work, gen_hash },
   { "myriadcoin-groestl", ALGO_MYRIAD_GROESTL,   "",            1,            1,            1, 0, 0, 0xFF,   0xFFFFULL, 0x0000ffffUL,  0,            0, myriadcoin_groestl_regenhash,               NULL,                   NULL, gen_hash },
-//#if 0 - Moved to allow test of other algos. 25.03.18
   { "groestl",            ALGO_GROESTL,          "",            1,          256,          256, 0, 0, 0xFF,   0xFFFFULL, 0x0000ffffUL,  0,            0,        groestlcoin_regenhash,               NULL,                   NULL,   sha256 },
   { "nist5",              ALGO_NIST,             "",            1,             1,           1, 0, 0, 0xFF,   0xFFFFULL, 0x0000ffffUL,  4, 8*16*4194304,           talkcoin_regenhash,               NULL,                   NULL, gen_hash },
   { "x11-gost",           ALGO_X11GOST,          "",            1,            1,            1, 0, 0, 0xFF,   0xFFFFULL, 0x0000ffffUL,  0,            0,            sibcoin_regenhash,               NULL,                   NULL, gen_hash },
-#if 0
   { "veltor",             ALGO_VELTOR,            "",           1,             1,           1, 0, 0, 0xFF,   0xFFFFULL, 0x0000ffffUL,  3, 8*16*4194304,             veltor_regenhash,               NULL,                   NULL, gen_hash },
-#endif
-#endif 
-
-#if BAIKAL_TYPE & BAIKAL_1751
   { "cryptonight",        ALGO_CRYPTONIGHT,      "", 1,  0x100010001LLU, 0x100010001LLU, 0, 0, 0xFF,   0xFFFFULL, 0x0000ffffUL,  6,            0,       cryptonight_regenhash,             NULL, NULL, gen_hash },
   { "cryptonight-lite",   ALGO_CRYPTONIGHT_LITE, "", (1ULL << 32), (1ULL << 32), (1ULL << 32), 0, 0, 0xFF,   0xFFFFULL, 0x0000ffffUL,  6,      0,		cryptonightlite_regenhash,         NULL,							NULL, gen_hash },
-#endif
-
-#if BAIKAL_TYPE & BAIKAL_1791
   { "blake256r8",         ALGO_BLAKECOIN,        "",            1,             1,           1, 0, 0, 0xFF,   0xFFFFULL, 0x000000ffUL,  0,          128,          blakecoin_regenhash, blakecoin_midstate, blakecoin_prepare_work,   sha256 },
   { "blake256r14",        ALGO_BLAKE,            "",            1,             1,           1, 0, 0, 0xFF,   0xFFFFULL, 0x00000000UL,  0,          128,           blake256_regenhash,  blake256_midstate,  blake256_prepare_work, gen_hash },
   { "decred",             ALGO_DECRED,           "",            1,             1,           1, 0, 0, 0xFF,   0xFFFFULL, 0x00000000UL,  0,            0,             decred_regenhash,    decred_midstate,    decred_prepare_work, gen_hash },
   { "vanilla",            ALGO_VANILLA,          "",            1,             1,           1, 0, 0, 0xFF,   0xFFFFULL, 0x000000ffUL,  0,          128,          blakecoin_regenhash, blakecoin_midstate, blakecoin_prepare_work, gen_hash },
-#if SUPPORT_SIAPOOL
   { "sia",                ALGO_SIA,              "",            1,             1,           1, 0, 0, 0xFF,   0xFFFFULL, 0x0000FFFFUL,  0,            0,                sia_regenhash,               NULL,                   NULL, sia_gen_hash },
-#else
   { "sia",                ALGO_SIA,              "",            1,             1,           1, 0, 0, 0xFF,   0xFFFFULL, 0x0000ffffUL,  0,          128,                sia_regenhash,               NULL,                   NULL,     NULL },  
-#endif  
   { "lbry",               ALGO_LBRY,             "",            1,           256,         256, 0, 0, 0xFF,   0xFFFFULL, 0x0000ffffUL,  2,  4*8*4194304,               lbry_regenhash,               NULL,                   NULL, gen_hash },
   { "pascal",             ALGO_PASCAL,           "",            1,             1,           1, 0, 0, 0xFF,   0xFFFFULL, 0x0000ffffUL,  0,            0,             pascal_regenhash,    pascal_midstate,                   NULL,     NULL }, 
-#endif
 
   // Terminator (do not remove)
   { NULL, ALGO_UNK, "", 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, NULL, NULL, NULL, NULL }
-};
+}; 
 #endif
 
 void copy_algorithm_settings(algorithm_t* dest, const char* algo)
@@ -1485,8 +1474,24 @@ static const char *lookup_algorithm_alias(const char *lookup_alias, uint8_t *nfa
   ALGO_ALIAS_NF("nscrypt", "ckolivas", 11);
   ALGO_ALIAS_NF("adaptive-nscrypt", "ckolivas", 11);
   ALGO_ALIAS_NF("adaptive-n-scrypt", "ckolivas", 11);
-#ifdef USE_BAIKAL
-#if BAIKAL_TYPE & BAIKAL_1772
+
+#if USE_BAIKAL
+
+  ALGO_ALIAS("darkcoin", "x11");
+  ALGO_ALIAS("marucoin", "x13");
+  ALGO_ALIAS("bitblock", "x14");
+  ALGO_ALIAS("quarkcoin", "quark");
+  ALGO_ALIAS("qubitcoin", "qubit");
+  ALGO_ALIAS("x11mod", "darkcoin");
+  ALGO_ALIAS("x11", "darkcoin");
+  ALGO_ALIAS("x11-gost", "sibcoin");
+  ALGO_ALIAS("x13mod", "marucoin");
+  ALGO_ALIAS("x13", "marucoin");
+  ALGO_ALIAS("x15", "bitblock");
+  ALGO_ALIAS("nist5", "talkcoin");
+  ALGO_ALIAS("blakecoin", "blake256r8");
+  ALGO_ALIAS("blake", "blake256r14");
+  ALGO_ALIAS("qubitcoin", "qubit");
   ALGO_ALIAS("darkcoin",     "x11");
   ALGO_ALIAS("darkcoin-mod", "x11");
   ALGO_ALIAS("quarkcoin",    "quark");
@@ -1494,25 +1499,17 @@ static const char *lookup_algorithm_alias(const char *lookup_alias, uint8_t *nfa
   ALGO_ALIAS("skein",        "skein-sha256");
   ALGO_ALIAS("skeincoin",    "skein-sha256");
   ALGO_ALIAS("myr-gr",       "myriadcoin-groestl");
-  //#if 0 Removed to allow test of other algos
   ALGO_ALIAS("groestlcoin",  "groestl");
   ALGO_ALIAS("talkcoin",     "nist5");
   ALGO_ALIAS("talkcoin-mod", "nist5");
   ALGO_ALIAS("x11gost",      "x11-gost");
   ALGO_ALIAS("sibcoin",      "x11-gost");
   ALGO_ALIAS("sibcoin-mod",  "x11-gost");
-  //#endif 0 Removed to allow test of other algos
-#endif
-
-#if BAIKAL_TYPE & BAIKAL_1791
   ALGO_ALIAS("vcash",        "vanilla");
   ALGO_ALIAS("blakecoin",    "blake256r8");
   ALGO_ALIAS("blake2b",      "sia");
   ALGO_ALIAS("blake2s",      "nevacoin"); // Added from f4682248.c 26.03.18, not usable.
   ALGO_ALIAS("lbry-sha",     "pascal");
-#endif
-
-#else
   ALGO_ALIAS("x11mod", "darkcoin");
   ALGO_ALIAS("x11", "darkcoin");
   ALGO_ALIAS("x11-gost", "sibcoin");
@@ -1593,38 +1590,34 @@ bool cmp_algorithm(const algorithm_t* algo1, const algorithm_t* algo2)
 int to_baikal_algorithm(algorithm_type_t type)
 {
     switch (type) {
-#if BAIKAL_TYPE & BAIKAL_1772
     case ALGO_X11:
-        return 0x01;
-    case ALGO_QUARK:
-        return 0x05;
+        return 1;
+    case ALGO_X13:
+        return 2;
+    case ALGO_X14:
+        return 3;
+    case ALGO_X15:            
+        return 4;
+    case ALGO_QUARK:        
+        return 5;
     case ALGO_QUBIT:
-        return 0x06;
+        return 6;   
     case ALGO_SKEINCOIN:
         return 0x08;
     case ALGO_MYRIAD_GROESTL:
         return 0x09;
-//#if 0 Moved to allow test of other algos
     case ALGO_GROESTL:
         return 0x0A;
     case ALGO_NIST:
         return 0x0C;
     case ALGO_X11GOST:
         return 0x07;
-#if 0
     case ALGO_VELTOR:
         return 0x0D;
-#endif
-#endif 
-
-#if BAIKAL_TYPE & BAIKAL_1751
     case ALGO_CRYPTONIGHT:
         return 0x20;
     case ALGO_CRYPTONIGHT_LITE:
         return 0x22;
-#endif 
-
-#if BAIKAL_TYPE & BAIKAL_1791
     case ALGO_BLAKECOIN:
     case ALGO_VANILLA:
         return 0x30;
@@ -1639,9 +1632,9 @@ int to_baikal_algorithm(algorithm_type_t type)
     case ALGO_PASCAL:
         return 0x37;
     case ALGO_BLAKE:  // input data 80byte
-#endif 
     default:
         return 0;
+        break;
     }
 }
 #endif 
