@@ -3,7 +3,7 @@
 
 #include "miner.h"
 
-#define BAIKAL_MAXMINERS    (16)
+#define BAIKAL_MAXMINERS    (8)
 #define BAIKAL_MAXASICS        (20)
 #define BAIKAL_WORK_FIFO        (48)
 
