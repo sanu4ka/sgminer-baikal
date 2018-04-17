@@ -3,9 +3,9 @@
 
 #include "miner.h"
 
-#define BAIKAL_MAXMINERS    (16)
+#define BAIKAL_MAXMINERS    (10)
 #define BAIKAL_MAXASICS        (20)
-#define BAIKAL_WORK_FIFO        (48)
+#define BAIKAL_WORK_FIFO        (30)
 
 #define BAIKAL_CLK_MIN  (150)
 #define BAIKAL_CLK_DEF  (300)
@@ -72,7 +72,7 @@ typedef struct {
     uint8_t     cmd;
     uint8_t     param;
     uint8_t     dest;
-    uint8_t     data[512];
+    uint8_t     data[256];
     uint32_t    len;
 } baikal_msg;
 
