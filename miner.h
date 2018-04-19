@@ -37,7 +37,6 @@ extern char *curly;
 #include "uthash.h"
 #include "logging.h"
 #include "util.h"
-#include "algorithm/sysendian.h"
 #include "algorithm.h"
 
 #include <sys/types.h>
@@ -796,16 +795,6 @@ static inline void flip180(void *dest_p, const void *src_p)
 		dest[i] = swab32(src[i]);
 }
 
-static inline void flip196(void *dest_p, const void *src_p)
-{
-	uint32_t *dest = (uint32_t *)dest_p;
-	const uint32_t *src = (uint32_t *)src_p;
-	int i;
-
-	for (i = 0; i < 49; i++)
-		dest[i] = swab32(src[i]);
-}
-
 /*
  * Encode a length len/4 vector of (uint32_t) into a length len vector of
  * (unsigned char) in big-endian form.  Assumes len is a multiple of 4.
@@ -838,10 +827,6 @@ static inline void endian_flip180(void *dest_p, const void *src_p)
 {
   flip180(dest_p, src_p);
 }
-static inline void endian_flip196(void *dest_p, const void *src_p)
-{
-  flip196(dest_p, src_p);
-}
 
 #else
 static inline void
@@ -859,10 +844,6 @@ endian_flip168(void __maybe_unused *dest_p, const void __maybe_unused *src_p)
 }
 static inline void
 endian_flip180(void __maybe_unused *dest_p, const void __maybe_unused *src_p)
-{
-}
-static inline void
-endian_flip196(void __maybe_unused *dest_p, const void __maybe_unused *src_p)
 {
 }
 #endif
@@ -1243,7 +1224,6 @@ extern void clear_stratum_shares(struct pool *pool);
 extern void clear_pool_work(struct pool *pool);
 extern void set_target(unsigned char *dest_target, double diff, double diff_multiplier2, const int thr_id);
 extern void set_target_neoscrypt(unsigned char *target, double diff, const int thr_id);
-extern double le256todiff(const void* le256, double diff_multiplier);
 extern void hash_driver_work(struct thr_info *mythr);
 
 extern void kill_work(void);
@@ -1296,7 +1276,6 @@ extern int hotplug_time;
 extern struct list_head scan_devices;
 extern int nDevs;
 extern int hw_errors;
-extern int hw_errors_bkl;
 extern bool use_syslog;
 extern bool opt_quiet;
 extern struct thr_info *control_thr;
@@ -1342,8 +1321,6 @@ typedef struct _dev_blk_ctx {
   cl_uint cty_e; cl_uint cty_f; cl_uint cty_g; cl_uint cty_h;
   cl_uint cty_i; cl_uint cty_j; cl_uint cty_k; cl_uint cty_l;
   cl_uint cty_m; cl_uint cty_n; cl_uint cty_o; cl_uint cty_p;
-  cl_ulong ulongMidstate[8];
-  cl_uint ulongData[3];
   cl_uint merkle; cl_uint ntime; cl_uint nbits; cl_uint nonce;
   cl_uint fW0; cl_uint fW1; cl_uint fW2; cl_uint fW3; cl_uint fW15;
   cl_uint fW01r; cl_uint fcty_e; cl_uint fcty_e2;
@@ -1415,17 +1392,13 @@ struct pool {
   int quota_gcd;
   int quota_used;
   int works;
-  uint8_t Target[32];
-  uint8_t EthWork[32];
-  uint8_t NetDiff[32];
   
   //XMR stuff
   char XMRAuthID[64];
-  uint32_t XMRBlobLen;
-  uint8_t XMRBlob[128]; // Changed from uint8_t XMRBlob[76]; 26.03.18
+  uint32_t XMRTarget;
+  uint8_t XMRBlob[76];
   pthread_mutex_t XMRGlobalNonceLock;
   uint32_t XMRGlobalNonce;
-  bool is_monero;
 
   double diff_accepted;
   double diff_rejected;
@@ -1436,7 +1409,6 @@ struct pool {
   bool lagging;
   bool probed;
   enum pool_state state;
-  bool no_keepalive;
   bool submit_old;
   bool remove_at_start;
   bool removed;
@@ -1566,18 +1538,24 @@ struct pool {
 #define GETWORK_MODE_GBT 'G'
 
 struct work {
-  unsigned char data[168]; // V7 Update: Changed from unsigned char data[256]; 27.03.18
-  unsigned char midstate[32]; // V7 Update: Changed from uunsigned char midstate[128]; 27.03.18
+  unsigned char data[256];
+  unsigned char midstate[32];
   unsigned char target[32];
   unsigned char hash[32];
 
   unsigned char device_target[32];
+#ifdef USE_BAIKAL
+	unsigned char   work_idx;
+	uint32_t	nonce; /* For devices that hash sole work */
+#endif
   double    device_diff;
   double    share_diff;
   /* cryptonight stuff */
   double	network_diff;  
-  uint32_t XMRBlobLen;
-  bool is_monero;
+  uint32_t XMRTarget;
+  uint8_t XMRBlob[76];
+    
+  uint32_t XMRNonce;
 
   int   rolls;
   int   drv_rolllimit; /* How much the driver can roll ntime */
@@ -1649,12 +1627,6 @@ extern bool test_nonce(struct work *work, uint32_t nonce);
 extern bool submit_tested_work(struct thr_info *thr, struct work *work);
 extern bool submit_nonce(struct thr_info *thr, struct work *work, uint32_t nonce);
 extern struct work *get_work(struct thr_info *thr, const int thr_id);
-extern void __add_queued(struct cgpu_info *cgpu, struct work *work);
-extern struct work *get_queued(struct cgpu_info *cgpu);
-extern struct work *__get_queued(struct cgpu_info *cgpu);
-extern void add_queued(struct cgpu_info *cgpu, struct work *work);
-extern struct work *get_queue_work(struct thr_info *thr, struct cgpu_info *cgpu, int thr_id);
-extern void work_completed(struct cgpu_info *cgpu, struct work *work);
 extern void _wlog(const char *str);
 extern void _wlogprint(const char *str);
 extern int curses_int(const char *query);

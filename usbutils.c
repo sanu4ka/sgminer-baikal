@@ -135,7 +135,7 @@ static struct usb_find_devices find_dev[] = {
 		.idVendor   = 0x0483,
 		.idProduct  = 0x5740,
 #endif
-        .iManufacturer = "Baikal",
+        .iManufacturer = "MS Technology",
 		.iProduct   = "Baikal Miner",
 		.config     = 1,
 		.timeout    = BAIKAL_TIMEOUT_MS,
@@ -2990,6 +2990,7 @@ void usb_cleanup(void)
 		cgpu = devices[i];
 		switch (cgpu->drv->drv_id) {
         case DRIVER_baikalu:
+                applog(LOG_ERR, "usb_cleanup : %d", i);
 				DEVWLOCK(cgpu, pstate);
 				release_cgpu(cgpu);
 				DEVWUNLOCK(cgpu, pstate);

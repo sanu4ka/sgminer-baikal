@@ -8,7 +8,6 @@
  */
 
 #include "algorithm.h"
-#include "driver-baikal.h"
 #include "sph/sph_sha2.h"
 
 #ifdef USE_GPU
@@ -45,59 +44,49 @@
 #include "algorithm/blakecoin.h"
 #include "algorithm/sia.h"
 #include "algorithm/decred.h"
-#include "algorithm/pascal.h"
 #include "algorithm/lbry.h"
 #include "algorithm/sibcoin.h"
 #include "algorithm/cryptonight.h"
-#include "algorithm/skeincoin.h"
-#include "algorithm/veltor.h"
 #include "compat.h"
 
 #include <inttypes.h>
 #include <string.h>
 
 const char *algorithm_type_str[] = {
-  "Unknown",
-  "Credits",
-  "Scrypt",
-  "NScrypt",
-  "Pascal",
-  "X11",
-  "X11Gost",
-  "X13",
-  "X14",
-  "X15",
-  "Keccak",
-  "Quarkcoin",
-  "Twecoin",
-  "Fugue256",
-  "NIST",
-  "Fresh",
-  "Whirlcoin",
-  "Neoscrypt",
-  "WhirlpoolX",
-  "Lyra2RE",
+  "unknown",             
+  "credits",             
+  "Scrypt",              
+  "NScrypt",             
+  "x11",                 
+  "x11Gost",              
+  "x13",                 
+  "xX14",                 
+  "x15",                 
+  "Keccak",              
+  "quark",                   
+  "Twecoin",             
+  "Fugue256",            
+  "nist",                
+  "Fresh",               
+  "Whirlcoin",           
+  "Neoscrypt",           
+  "WhirlpoolX",          
+  "Lyra2RE",             
   "Lyra2REV2",
-  "Pluck",
-  "Yescrypt",
-  "Yescrypt-multi",
-  "Blakecoin",
-  "Blake",
-  "Sia",
-  "Decred",
-  "Vanilla",
-  "Lbry",
-  "Cryptonight",
-  "Cryptonight-lite",
-  "Skeincoin",
-  "Skein2",
-  "Qubit",
-  "MGroestl",
-  "Groestl",
-  "Nevacoin",
-  "Diamond",
-  "Veltor"
-};
+  "Pluck",                
+  "Yescrypt",            
+  "Yescrypt-multi",      
+  "blakecoin",           
+  "blake",               
+  "sia",                 
+  "decred",              
+  "vanilla",             
+  "lbry",                
+  "cryptonight",         
+  "qubit",               
+  "groestl",             
+  "diamond"              
+};                       
 
 void sha256(const unsigned char *message, unsigned int len, unsigned char *digest)
 {
@@ -220,25 +209,6 @@ static cl_int queue_scrypt_kernel(struct __clState *clState, struct _dev_blk_ctx
   CL_SET_VARG(4, &midstate[0]);
   CL_SET_VARG(4, &midstate[16]);
   CL_SET_ARG(le_target);
-
-  return status;
-}
-
-static cl_int queue_pascal_kernel(struct __clState *clState, struct _dev_blk_ctx *blk, __maybe_unused cl_uint threads)
-{
-  cl_kernel *kernel = &clState->kernel;
-  unsigned int num = 0;
-  cl_ulong le_target;
-  cl_int status = 0;
-
-  le_target = *(cl_ulong *)(blk->work->device_target + 24);
-  flip196(clState->cldata, blk->work->data);
-  status = clEnqueueWriteBuffer(clState->commandQueue, clState->CLbuffer0, true, 0, 196, clState->cldata, 0, NULL, NULL);
-
-  CL_SET_ARG(clState->CLbuffer0);
-  CL_SET_ARG(clState->outputBuffer);
-  CL_SET_ARG(le_target);
-  CL_SET_ARG(blk->work->midstate);
 
   return status;
 }
@@ -509,34 +479,6 @@ static cl_int queue_sibcoin_mod_kernel(struct __clState *clState, struct _dev_bl
   return status;
 }
 
-static cl_int queue_veltor_kernel(struct __clState *clState, struct _dev_blk_ctx *blk, __maybe_unused cl_uint threads)
-{
-  cl_kernel *kernel;
-  unsigned int num;
-  cl_ulong le_target;
-  cl_int status = 0;
-
-  le_target = *(cl_ulong *)(blk->work->device_target + 24);
-  flip80(clState->cldata, blk->work->data);
-  status = clEnqueueWriteBuffer(clState->commandQueue, clState->CLbuffer0, true, 0, 80, clState->cldata, 0, NULL, NULL);
-  // skein80 search()
-  kernel = &clState->kernel;
-  num = 0;
-  CL_SET_ARG(clState->CLbuffer0);
-  CL_SET_ARG(clState->padbuffer8);
-  // shavite search1()
-  kernel = clState->extra_kernels;
-  CL_SET_ARG_0(clState->padbuffer8);
-  // shabal search2()
-  CL_NEXTKERNEL_SET_ARG_0(clState->padbuffer8);
-  // streebog search3()
-  num = 0;
-  CL_NEXTKERNEL_SET_ARG(clState->padbuffer8);
-  CL_SET_ARG(clState->outputBuffer);
-  CL_SET_ARG(le_target);
-
-  return status;
-}
 
 static cl_int queue_bitblock_kernel(struct __clState *clState, struct _dev_blk_ctx *blk, __maybe_unused cl_uint threads)
 {
@@ -1149,27 +1091,13 @@ static cl_int queue_cryptonight_kernel(_clState *clState, dev_blk_ctx *blk, __ma
 {
 	cl_kernel *kernel = &clState->kernel;
 	unsigned int num = 0;
-	cl_int status = 0, tgt32 = *(uint32_t*)(blk->work->target + 28);
-	int variant = monero_variant(blk->work);
-	if (variant != clState->monero_variant) {
-		applog(LOG_NOTICE, "switch to monero variant %d", variant);
-		char kernel_name[20] = "search1";
-		if (variant > 0)
-			 snprintf(kernel_name + 7, sizeof(kernel_name) - 7, "_var%d", variant);
-		clReleaseKernel(clState->extra_kernels[0]);
-		clState->extra_kernels[0] = clCreateKernel(clState->program, kernel_name, &status);
-		if (status != CL_SUCCESS) {
-			applog(LOG_ERR, "Error %d: Creating Kernel \"%s\" from program. (clCreateKernel)", kernel_name, status);
-			return status;
-			
-		}
-		clState->monero_variant = variant;
-	}
+	cl_int status = 0, tgt32 = (blk->work->XMRTarget);
+	cl_ulong le_target = ((cl_ulong)(blk->work->XMRTarget));
 
-
+	//le_target = *(cl_ulong *)(blk->work->device_target + 24);
 	memcpy(clState->cldata, blk->work->data, 76);
 		
-	status = clEnqueueWriteBuffer(clState->commandQueue, clState->CLbuffer0, CL_FALSE, 0, blk->work->XMRBlobLen, clState->cldata, 0, NULL, NULL);
+	status = clEnqueueWriteBuffer(clState->commandQueue, clState->CLbuffer0, true, 0, 76, clState->cldata , 0, NULL, NULL);
 	
 	CL_SET_ARG(clState->CLbuffer0);
 	CL_SET_ARG(clState->Scratchpads);
@@ -1179,8 +1107,6 @@ static cl_int queue_cryptonight_kernel(_clState *clState, dev_blk_ctx *blk, __ma
 	kernel = clState->extra_kernels;
 	CL_SET_ARG(clState->Scratchpads);
 	CL_SET_ARG(clState->States);
-	if (variant > 0)
-		CL_SET_ARG(*(cl_uint*)(clState->cldata + 35));
 	
 	num = 0;
 	CL_NEXTKERNEL_SET_ARG(clState->Scratchpads);
@@ -1247,23 +1173,6 @@ static cl_int queue_lbry_kernel(struct __clState *clState, struct _dev_blk_ctx *
 }
 
 
-static cl_int queue_skeincoin_kernel(_clState *clState, dev_blk_ctx *blk, __maybe_unused cl_uint threads)
-{
-  cl_kernel *kernel = &clState->kernel;
-  unsigned int num = 0;
-  cl_int status = 0;
-  int i;
-  for (i = 0; i < 8; i++) {
-    status |= clSetKernelArg(*kernel, num++, sizeof(cl_ulong), blk->ulongMidstate + i);
-  }
-  for (i = 0; i < 3; i++) {
-    status |= clSetKernelArg(*kernel, num++, sizeof(cl_uint), blk->ulongData + i);
-  }
-  CL_SET_ARG(clState->outputBuffer);
-
-  return status;
-}
-
 static algorithm_settings_t algos[] = {
   // kernels starting from this will have difficulty calculated by using litecoin algorithm
 #define A_SCRYPT(a) \
@@ -1310,17 +1219,23 @@ static algorithm_settings_t algos[] = {
   // kernels starting from this will have difficulty calculated by using quarkcoin algorithm
 #define A_QUARK(a, b) \
   { a, ALGO_QUARK, "", 256, 256, 256, 0, 0, 0xFF, 0xFFFFFFULL, 0x0000ffffUL, 0, 0, CL_QUEUE_OUT_OF_ORDER_EXEC_MODE_ENABLE, b, NULL, NULL, queue_sph_kernel, gen_hash, append_x11_compiler_options }
-  A_QUARK("quarkcoin", quarkcoin_regenhash),
-  A_QUARK("qubitcoin", qubitcoin_regenhash),
+  A_QUARK("quark", quarkcoin_regenhash),
   A_QUARK("animecoin", animecoin_regenhash),
   A_QUARK("sifcoin", sifcoin_regenhash),
 #undef A_QUARK
+
+#define A_QUBIT(a) \
+  { a, ALGO_QUBIT, "", 256, 256, 256, 0, 0, 0xFF, 0xFFFFFFULL, 0x0000ffffUL, 0, 0, CL_QUEUE_OUT_OF_ORDER_EXEC_MODE_ENABLE, qubitcoin_regenhash, NULL, NULL, queue_sph_kernel, gen_hash, append_x11_compiler_options }
+  A_QUBIT("qubit"),
+#undef A_QUBIT
 
   // kernels starting from this will have difficulty calculated by using bitcoin algorithm
 #define A_DARK(a, b) \
   { a, ALGO_X11, "", 1, 1, 1, 0, 0, 0xFF, 0xFFFFULL, 0x0000ffffUL, 0, 0, CL_QUEUE_OUT_OF_ORDER_EXEC_MODE_ENABLE, b, NULL, NULL, queue_sph_kernel, gen_hash, append_x11_compiler_options }
   A_DARK("darkcoin", darkcoin_regenhash),
+  A_DARK("sibcoin", sibcoin_regenhash),  
   A_DARK("inkcoin", inkcoin_regenhash),
+  A_DARK("myriadcoin-groestl", myriadcoin_groestl_regenhash),
 #undef A_DARK
 
   { "twecoin", ALGO_TWE, "", 1, 1, 1, 0, 0, 0xFF, 0xFFFFULL, 0x0000ffffUL, 0, 0, CL_QUEUE_OUT_OF_ORDER_EXEC_MODE_ENABLE, twecoin_regenhash, NULL, NULL, queue_sph_kernel, sha256, NULL },
@@ -1328,8 +1243,7 @@ static algorithm_settings_t algos[] = {
 
   { "darkcoin-mod", ALGO_X11, "", 1, 1, 1, 0, 0, 0xFF, 0xFFFFULL, 0x0000ffffUL, 10, 8 * 16 * 4194304, 0, darkcoin_regenhash, NULL, NULL, queue_darkcoin_mod_kernel, gen_hash, append_x11_compiler_options },
 
-  { "sibcoin", ALGO_X11GOST, "", 1, 1, 1, 0, 0, 0xFF, 0xFFFFULL, 0x0000ffffUL, 0, 0, CL_QUEUE_OUT_OF_ORDER_EXEC_MODE_ENABLE, sibcoin_regenhash, NULL, NULL, queue_sph_kernel, gen_hash, append_x11_compiler_options },
-  { "sibcoin-mod", ALGO_X11GOST, "", 1, 1, 1, 0, 0, 0xFF, 0xFFFFULL, 0x0000ffffUL, 11, 2 * 16 * 4194304, 0, sibcoin_regenhash, NULL, NULL, queue_sibcoin_mod_kernel, gen_hash, append_x11_compiler_options },
+  { "sibcoin-mod", ALGO_X11, "", 1, 1, 1, 0, 0, 0xFF, 0xFFFFULL, 0x0000ffffUL, 11, 2 * 16 * 4194304, 0, sibcoin_regenhash, NULL, NULL, queue_sibcoin_mod_kernel, gen_hash, append_x11_compiler_options },
   
   { "marucoin", ALGO_X13, "", 1, 1, 1, 0, 0, 0xFF, 0xFFFFULL, 0x0000ffffUL, 0, 0, CL_QUEUE_OUT_OF_ORDER_EXEC_MODE_ENABLE, marucoin_regenhash, NULL, NULL, queue_sph_kernel, gen_hash, append_x13_compiler_options },
   { "marucoin-mod", ALGO_X13, "", 1, 1, 1, 0, 0, 0xFF, 0xFFFFULL, 0x0000ffffUL, 12, 8 * 16 * 4194304, 0, marucoin_regenhash, NULL, NULL, queue_marucoin_mod_kernel, gen_hash, append_x13_compiler_options },
@@ -1348,68 +1262,42 @@ static algorithm_settings_t algos[] = {
   { "lyra2re", ALGO_LYRA2RE, "", 1, 128, 128, 0, 0, 0xFF, 0xFFFFULL, 0x0000ffffUL, 4, 2 * 8 * 4194304, 0, lyra2re_regenhash, blake256_midstate, blake256_prepare_work, queue_lyra2re_kernel, gen_hash, NULL },
   { "lyra2rev2", ALGO_LYRA2REV2, "", 1, 256, 256, 0, 0, 0xFF, 0xFFFFULL, 0x0000ffffUL, 6, -1, CL_QUEUE_OUT_OF_ORDER_EXEC_MODE_ENABLE, lyra2rev2_regenhash, blake256_midstate, blake256_prepare_work, queue_lyra2rev2_kernel, gen_hash, append_neoscrypt_compiler_options },
 
-  { "myriadcoin-groestl", ALGO_MYRIAD_GROESTL, "", 1, 1, 1, 0, 0, 0xFF, 0xFFFFULL, 0x0000ffffUL, 0, 0, CL_QUEUE_OUT_OF_ORDER_EXEC_MODE_ENABLE, myriadcoin_groestl_regenhash, NULL, NULL, queue_sph_kernel, gen_hash, append_x11_compiler_options },
-
   // kernels starting from this will have difficulty calculated by using fuguecoin algorithm
 #define A_FUGUE(a, b, c) \
   { a, ALGO_FUGUE, "", 1, 256, 256, 0, 0, 0xFF, 0xFFFFULL, 0x0000ffffUL, 0, 0, CL_QUEUE_OUT_OF_ORDER_EXEC_MODE_ENABLE, b, NULL, NULL, queue_sph_kernel, c, NULL }
   A_FUGUE("fuguecoin", fuguecoin_regenhash, sha256),
+  A_FUGUE("groestlcoin", groestlcoin_regenhash, sha256),
   A_FUGUE("diamond", groestlcoin_regenhash, gen_hash),
 #undef A_FUGUE
-  { "groestlcoin", ALGO_GROESTL, "", 1, 256, 256, 0, 0, 0xFF, 0xFFFFULL, 0x0000ffffUL, 0, 0, CL_QUEUE_OUT_OF_ORDER_EXEC_MODE_ENABLE, groestlcoin_regenhash, NULL, NULL, queue_sph_kernel, sha256, NULL },
 
   { "whirlcoin", ALGO_WHIRL, "", 1, 1, 1, 0, 0, 0xFF, 0xFFFFULL, 0x0000ffffUL, 3, 8 * 16 * 4194304, CL_QUEUE_OUT_OF_ORDER_EXEC_MODE_ENABLE, whirlcoin_regenhash, NULL, NULL, queue_whirlcoin_kernel, sha256, NULL },
   { "whirlpoolx", ALGO_WHIRLPOOLX, "", 1, 1, 1, 0, 0, 0xFF, 0xFFFFULL, 0x0000FFFFUL, 0, 0, 0, whirlpoolx_regenhash, NULL, NULL, queue_whirlpoolx_kernel, gen_hash, NULL },
 
   { "blake256r8",  ALGO_BLAKECOIN, "", 1, 1, 1, 0, 0, 0xFF, 0xFFFFULL, 0x000000ffUL, 0, 128, 0, blakecoin_regenhash, blakecoin_midstate, blakecoin_prepare_work, queue_blake_kernel, sha256,   NULL },
   { "blake256r14", ALGO_BLAKE,     "", 1, 1, 1, 0, 0, 0xFF, 0xFFFFULL, 0x00000000UL, 0, 128, 0, blake256_regenhash, blake256_midstate, blake256_prepare_work, queue_blake_kernel, gen_hash, NULL },
-#if SUPPORT_SIAPOOL
-{ "sia",         ALGO_SIA,       "", 1, 1, 1, 0, 0, 0xFF, 0xFFFFULL, 0x0000FFFFUL, 0, 0, 0, sia_regenhash, NULL, NULL, queue_sia_kernel, sia_gen_hash, NULL },
-#else
-  { "sia",         ALGO_SIA,       "", 1, 1, 1, 0, 0, 0xFF, 0xFFFFULL, 0x0000FFFFUL, 0, 128, 0, sia_regenhash, NULL, NULL, queue_sia_kernel, NULL, NULL },  
-#endif  
+  { "sia",         ALGO_SIA,       "", 1, 1, 1, 0, 0, 0xFF, 0xFFFFULL, 0x0000FFFFUL, 0, 128, 0, sia_regenhash, NULL, NULL, queue_sia_kernel, NULL, NULL },
   { "vanilla",     ALGO_VANILLA,   "", 1, 1, 1, 0, 0, 0xFF, 0xFFFFULL, 0x000000ffUL, 0, 128, 0, blakecoin_regenhash, blakecoin_midstate, blakecoin_prepare_work, queue_blake_kernel, gen_hash, NULL },
 
   { "lbry", ALGO_LBRY, "", 1, 256, 256, 0, 0, 0xFF, 0xFFFFULL, 0x0000ffffUL, 2, 4 * 8 * 4194304, 0, lbry_regenhash, NULL, NULL, queue_lbry_kernel, gen_hash, NULL },
 
-  { "pascal", ALGO_PASCAL, "", 1, 1, 1, 0, 0, 0xFF, 0xFFFFULL, 0x0000ffffUL, 0, 0, CL_QUEUE_OUT_OF_ORDER_EXEC_MODE_ENABLE, pascal_regenhash, pascal_midstate, NULL, queue_pascal_kernel, NULL, NULL },
-  { "cryptonight", ALGO_CRYPTONIGHT, "", 1, 0x100010001LLU, 0x100010001LLU, 0, 0, 0xFF, 0xFFFFULL, 0x0000ffffUL, 6, 0, 0, cryptonight_regenhash, NULL, queue_cryptonight_kernel, gen_hash, NULL },
-  { "cryptonight-lite", ALGO_CRYPTONIGHT_LITE, "", (1ULL << 32), (1ULL << 32), (1ULL << 32), 0, 0, 0xFF, 0xFFFFULL, 0x0000ffffUL, 6, 0, 0, cryptonightlite_regenhash, NULL, NULL, queue_cryptonight_kernel, gen_hash, NULL },
-  { "skeincoin", ALGO_SKEINCOIN, "", 1, 1, 1, 0, 0, 0xFF, 0xFFFFULL, 0x000000ffUL, 0, 128,              CL_QUEUE_OUT_OF_ORDER_EXEC_MODE_ENABLE, skeincoin_regenhash, NULL, skeincoin_prepare_work, queue_skeincoin_kernel, gen_hash, NULL },
-  { "veltor",    ALGO_VELTOR,    "", 1, 1, 1, 0, 0, 0xFF, 0xFFFFULL, 0x0000ffffUL, 3, 8 * 16 * 4194304, 0,                                       veltor_regenhash,    NULL,         NULL, queue_veltor_kernel, gen_hash, append_x11_compiler_options },
+  { "cryptonight", ALGO_CRYPTONIGHT, "", (1ULL << 32), (1ULL << 32), (1ULL << 32), 0, 0, 0xFF, 0xFFFFULL, 0x0000ffffUL, 6, 0, 0, cryptonight_regenhash, NULL, NULL, queue_cryptonight_kernel, gen_hash, NULL },
   // Terminator (do not remove)
   { NULL, ALGO_UNK, "", 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, NULL, NULL, NULL, NULL, NULL }
 };
-#endif  // USE_GPU
+#endif
 
 #ifdef USE_BAIKAL
-static algorithm_settings_t algos[] = {
+static algorithm_settings_t algos[] = {  
   { "quark",        ALGO_QUARK,     "", 256, 256, 256, 0, 0, 0xFF,      0xFFFFFFULL, 0x0000ffffUL, 0,                 0, quarkcoin_regenhash,   NULL, NULL, gen_hash },
   { "qubit",        ALGO_QUBIT,     "", 256, 256, 256, 0, 0, 0xFF,      0xFFFFFFULL, 0x0000ffffUL, 0,                 0, qubitcoin_regenhash,   NULL, NULL, gen_hash },
   { "x11",          ALGO_X11,       "",    1,  1,  1,  0, 0, 0xFF,      0xFFFFULL,   0x0000ffffUL, 0,                 0, darkcoin_regenhash,    NULL, NULL, gen_hash }, 
   { "x13",          ALGO_X13,       "",    1,  1,  1,  0, 0, 0xFF,      0xFFFFULL,   0x0000ffffUL, 0,                 0, marucoin_regenhash,    NULL, NULL, gen_hash },  
   { "x14",          ALGO_X14,       "",    1,  1,  1,  0, 0, 0xFF,      0xFFFFULL,   0x0000ffffUL, 13, 8 * 16 * 4194304, x14_regenhash,         NULL, NULL, gen_hash },
   { "x15",          ALGO_X15,       "",    1,  1,  1,  0, 0, 0xFF,      0xFFFFULL,   0x0000ffffUL, 14, 4 * 16 * 4194304, bitblock_regenhash,    NULL, NULL, gen_hash },
-  { "skein-sha256",       ALGO_SKEINCOIN,        "",            1,            1,            1, 0, 0, 0xFF,   0xFFFFULL, 0x000000ffUL,  0,          128,          skeincoin_regenhash,               NULL, skeincoin_prepare_work, gen_hash },
-  { "myriadcoin-groestl", ALGO_MYRIAD_GROESTL,   "",            1,            1,            1, 0, 0, 0xFF,   0xFFFFULL, 0x0000ffffUL,  0,            0, myriadcoin_groestl_regenhash,               NULL,                   NULL, gen_hash },
-  { "groestl",            ALGO_GROESTL,          "",            1,          256,          256, 0, 0, 0xFF,   0xFFFFULL, 0x0000ffffUL,  0,            0,        groestlcoin_regenhash,               NULL,                   NULL,   sha256 },
-  { "nist5",              ALGO_NIST,             "",            1,             1,           1, 0, 0, 0xFF,   0xFFFFULL, 0x0000ffffUL,  4, 8*16*4194304,           talkcoin_regenhash,               NULL,                   NULL, gen_hash },
-  { "x11-gost",           ALGO_X11GOST,          "",            1,            1,            1, 0, 0, 0xFF,   0xFFFFULL, 0x0000ffffUL,  0,            0,            sibcoin_regenhash,               NULL,                   NULL, gen_hash },
-  { "cryptonight",        ALGO_CRYPTONIGHT,      "", 1,  0x100010001LLU, 0x100010001LLU, 0, 0, 0xFF,   0xFFFFULL, 0x0000ffffUL,  6,            0,       cryptonight_regenhash,             NULL, NULL, gen_hash },
-  { "cryptonight-lite",   ALGO_CRYPTONIGHT_LITE, "", (1ULL << 32), (1ULL << 32), (1ULL << 32), 0, 0, 0xFF,   0xFFFFULL, 0x0000ffffUL,  6,      0,		cryptonightlite_regenhash,         NULL,							NULL, gen_hash },
-  { "blake256r8",         ALGO_BLAKECOIN,        "",            1,             1,           1, 0, 0, 0xFF,   0xFFFFULL, 0x000000ffUL,  0,          128,          blakecoin_regenhash, blakecoin_midstate, blakecoin_prepare_work,   sha256 },
-  { "blake256r14",        ALGO_BLAKE,            "",            1,             1,           1, 0, 0, 0xFF,   0xFFFFULL, 0x00000000UL,  0,          128,           blake256_regenhash,  blake256_midstate,  blake256_prepare_work, gen_hash },
-  { "decred",             ALGO_DECRED,           "",            1,             1,           1, 0, 0, 0xFF,   0xFFFFULL, 0x00000000UL,  0,            0,             decred_regenhash,    decred_midstate,    decred_prepare_work, gen_hash },
-  { "vanilla",            ALGO_VANILLA,          "",            1,             1,           1, 0, 0, 0xFF,   0xFFFFULL, 0x000000ffUL,  0,          128,          blakecoin_regenhash, blakecoin_midstate, blakecoin_prepare_work, gen_hash },
-  { "sia",                ALGO_SIA,              "",            1,             1,           1, 0, 0, 0xFF,   0xFFFFULL, 0x0000FFFFUL,  0,            0,                sia_regenhash,               NULL,                   NULL, sia_gen_hash },
-  { "sia",                ALGO_SIA,              "",            1,             1,           1, 0, 0, 0xFF,   0xFFFFULL, 0x0000ffffUL,  0,          128,                sia_regenhash,               NULL,                   NULL,     NULL },  
-  { "lbry",               ALGO_LBRY,             "",            1,           256,         256, 0, 0, 0xFF,   0xFFFFULL, 0x0000ffffUL,  2,  4*8*4194304,               lbry_regenhash,               NULL,                   NULL, gen_hash },
-  { "pascal",             ALGO_PASCAL,           "",            1,             1,           1, 0, 0, 0xFF,   0xFFFFULL, 0x0000ffffUL,  0,            0,             pascal_regenhash,    pascal_midstate,                   NULL,     NULL }, 
-
   // Terminator (do not remove)
   { NULL, ALGO_UNK, "", 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, NULL, NULL, NULL, NULL }
-}; 
-#endif
+};
+#endif 
 
 void copy_algorithm_settings(algorithm_t* dest, const char* algo)
 {
@@ -1473,14 +1361,13 @@ static const char *lookup_algorithm_alias(const char *lookup_alias, uint8_t *nfa
   ALGO_ALIAS_NF("nscrypt", "ckolivas", 11);
   ALGO_ALIAS_NF("adaptive-nscrypt", "ckolivas", 11);
   ALGO_ALIAS_NF("adaptive-n-scrypt", "ckolivas", 11);
-
-#if USE_BAIKAL
-
+#ifdef USE_BAIKAL
   ALGO_ALIAS("darkcoin", "x11");
   ALGO_ALIAS("marucoin", "x13");
   ALGO_ALIAS("bitblock", "x14");
   ALGO_ALIAS("quarkcoin", "quark");
   ALGO_ALIAS("qubitcoin", "qubit");
+#else
   ALGO_ALIAS("x11mod", "darkcoin");
   ALGO_ALIAS("x11", "darkcoin");
   ALGO_ALIAS("x11-gost", "sibcoin");
@@ -1491,35 +1378,6 @@ static const char *lookup_algorithm_alias(const char *lookup_alias, uint8_t *nfa
   ALGO_ALIAS("blakecoin", "blake256r8");
   ALGO_ALIAS("blake", "blake256r14");
   ALGO_ALIAS("qubitcoin", "qubit");
-  ALGO_ALIAS("darkcoin",     "x11");
-  ALGO_ALIAS("darkcoin-mod", "x11");
-  ALGO_ALIAS("quarkcoin",    "quark");
-  ALGO_ALIAS("qubitcoin",    "qubit");
-  ALGO_ALIAS("skein",        "skein-sha256");
-  ALGO_ALIAS("skeincoin",    "skein-sha256");
-  ALGO_ALIAS("myr-gr",       "myriadcoin-groestl");
-  ALGO_ALIAS("groestlcoin",  "groestl");
-  ALGO_ALIAS("talkcoin",     "nist5");
-  ALGO_ALIAS("talkcoin-mod", "nist5");
-  ALGO_ALIAS("x11gost",      "x11-gost");
-  ALGO_ALIAS("sibcoin",      "x11-gost");
-  ALGO_ALIAS("sibcoin-mod",  "x11-gost");
-  ALGO_ALIAS("vcash",        "vanilla");
-  ALGO_ALIAS("blakecoin",    "blake256r8");
-  ALGO_ALIAS("blake2b",      "sia");
-  ALGO_ALIAS("blake2s",      "nevacoin"); // Added from f4682248.c 26.03.18, not usable.
-  ALGO_ALIAS("lbry-sha",     "pascal");
-  ALGO_ALIAS("x11mod", "darkcoin");
-  ALGO_ALIAS("x11", "darkcoin");
-  ALGO_ALIAS("x11-gost", "sibcoin");
-  ALGO_ALIAS("x13mod", "marucoin");
-  ALGO_ALIAS("x13", "marucoin");
-  ALGO_ALIAS("x15", "bitblock");
-  ALGO_ALIAS("nist5", "talkcoin");
-  ALGO_ALIAS("blakecoin", "blake256r8");
-  ALGO_ALIAS("blake", "blake256r14");
-  ALGO_ALIAS("qubitcoin", "qubit");
-  ALGO_ALIAS("skein-sha256", "skeincoin");
 #endif
 
 #undef ALGO_ALIAS
@@ -1601,36 +1459,6 @@ int to_baikal_algorithm(algorithm_type_t type)
         return 5;
     case ALGO_QUBIT:
         return 6;   
-    case ALGO_SKEINCOIN:
-        return 0x08;
-    case ALGO_MYRIAD_GROESTL:
-        return 0x09;
-    case ALGO_GROESTL:
-        return 0x0A;
-    case ALGO_NIST:
-        return 0x0C;
-    case ALGO_X11GOST:
-        return 0x07;
-    case ALGO_VELTOR:
-        return 0x0D;
-    case ALGO_CRYPTONIGHT:
-        return 0x20;
-    case ALGO_CRYPTONIGHT_LITE:
-        return 0x22;
-    case ALGO_BLAKECOIN:
-    case ALGO_VANILLA:
-        return 0x30;
-    case ALGO_DECRED: // input data 180byte
-        return 0x32;
-    case ALGO_SIA:
-        return 0x34;
-    case ALGO_NEVACOIN: // added from f4682248.c 26.03.18
-        return 0x35; // added from f4682248.c 26.03.18
-    case ALGO_LBRY:
-        return 0x36;
-    case ALGO_PASCAL:
-        return 0x37;
-    case ALGO_BLAKE:  // input data 80byte
     default:
         return 0;
         break;

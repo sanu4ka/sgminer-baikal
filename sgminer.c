@@ -58,7 +58,7 @@ char *curly = ":D";
 #include "findnonce.h"
 #include "adl.h"
 #include "driver-opencl.h"
-//#include "bench_block.h"
+#include "bench_block.h"
 
 #include "algorithm.h"
 #include "pool.h"
@@ -181,7 +181,7 @@ char *opt_baikal_fan = NULL;
 //enum cl_kernels opt_baikal_kernel = KL_X11;
 //char *opt_baikal_algo = X11_KERNNAME;
 static int total_algo;
-bool opt_enable_nicehash_sma;
+bool opt_enable_nicehash_sma = false;
 static int nicehash_sma_thr_id;
 #endif
 
@@ -266,7 +266,6 @@ static void probe_pools(void);
 static bool test_pool(struct pool *pool);
 
 int hw_errors;
-int hw_errors_bkl;
 int total_accepted, total_rejected;
 double total_diff1;
 int total_getworks, total_stale, total_discarded;
@@ -313,7 +312,7 @@ static char datestamp[40];
 static char blocktime[32];
 struct timeval block_timeval;
 static char best_share[8] = "0";
-double current_diff = 0;
+double current_diff = 0xFFFFFFFFFFFFFFFFULL;
 static char block_diff[8];
 double best_diff = 0;
 
@@ -1153,24 +1152,30 @@ static char* set_userpass(const char *arg)
     return (NULL);
 }
 
-static char *set_extranonce_subscribe(char *arg)
+static char* set_extranonce_subscribe(char *arg)
 {
-	struct pool *pool = get_current_pool();
+    struct pool *pool = get_current_pool();
 
-	applog(LOG_DEBUG, "Enable extranonce subscribe on %d", pool->pool_no);
-    opt_set_invbool(&pool->extranonce_subscribe);
-	opt_set_bool(&pool->extranonce_subscribe);
-
+    if (strcasecmp("false", arg) == 0) {
+        applog(LOG_DEBUG, "Disable extranonce subscribe on %d", pool->pool_no);
+        opt_set_invbool(&pool->extranonce_subscribe);
+    }
+    else {
+        applog(LOG_DEBUG, "Enable extranonce subscribe on %d", pool->pool_no); 
+        opt_set_bool(&pool->extranonce_subscribe); 
+    }
+      
     return (NULL);
 }
 
-static char *set_monero(char *arg)
+static char* set_no_extranonce_subscribe(char *arg)
 {
-	struct pool *pool = get_current_pool();
-	applog(LOG_DEBUG, "Select appropriate Cryptonight Monero variant on %d", pool->pool_no);
-	opt_set_bool(&pool->is_monero);
+    struct pool *pool = get_current_pool();
 
-	return NULL;
+    applog(LOG_DEBUG, "Disable extranonce subscribe on %d", pool->pool_no);
+    opt_set_invbool(&pool->extranonce_subscribe);
+
+    return (NULL);
 }
 
 static char* set_pool_priority(char *arg)
@@ -1468,12 +1473,6 @@ struct opt_table opt_config_table[] = {
     OPT_WITHOUT_ARG("--disable-rejecting",
                     opt_set_bool, &opt_disable_pool,
                     "Automatically disable pools that continually reject shares"),
-	OPT_WITHOUT_ARG("--monero|--pool-monero",
-					set_monero, NULL,
-					"Use Monero Cryptonight variants as appropriate"),
-	OPT_WITHOUT_ARG("--extranonce|--pool-extranonce",
-					set_extranonce_subscribe, NULL,
-					"Enable 'extranonce' stratum subscribe for pool"),
     OPT_WITH_ARG("--expiry|-E",
                  set_int_0_to_9999, opt_show_intval, &opt_expiry,
                  "Upper bound on how many seconds after getting work we consider a share from it stale"),
@@ -1658,6 +1657,9 @@ struct opt_table opt_config_table[] = {
     OPT_WITHOUT_ARG("--no-submit-stale",
                     opt_set_invbool, &opt_submit_stale,
                     "Don't submit shares if they are detected as stale"),
+    OPT_WITHOUT_ARG("--no-extranonce|--pool-no-extranonce",
+                    set_no_extranonce_subscribe, NULL,
+                    "Disable 'extranonce' stratum subscribe for pool"),    
     OPT_WITH_ARG("--pass|--pool-pass|-p",
                  set_pass, NULL, NULL,
                  "Password for bitcoin JSON-RPC server"),
@@ -2646,8 +2648,9 @@ static void suffix_string(uint64_t val, char *buf, size_t bufsiz, int sigdigits)
         if (decimal)
             snprintf(buf, bufsiz, "%.3g%s", dval, suffix);
         else
-      snprintf(buf, bufsiz, "%.4g%s", dval, suffix);
-  } else {
+            snprintf(buf, bufsiz, "%d%s", (unsigned int)dval, suffix);
+    }
+    else {
         /* Always show sigdigits + 1, padded on right with zeroes
          * followed by suffix */
         int ndigits = sigdigits - 1 - (dval > 0.0 ? (int)floor(log10(dval)) : 0);
@@ -2658,12 +2661,13 @@ static void suffix_string(uint64_t val, char *buf, size_t bufsiz, int sigdigits)
 
 /* Convert a double value into a truncated string for displaying with its
  * associated suitable for Mega, Giga etc. Buf array needs to be long enough */
-void suffix_string_double(double val, char *buf, size_t bufsiz, int sigdigits)
+static void suffix_string_double(double val, char *buf, size_t bufsiz, int sigdigits)
 {
     if (val < 10) {
         snprintf(buf, bufsiz, "%.3f", val);
-  } else {
-    return suffix_string(val, buf, bufsiz, sigdigits);
+    }
+    else {
+        return (suffix_string(val, buf, bufsiz, sigdigits));
     }
 }
 
@@ -3377,7 +3381,7 @@ static bool submit_upstream_work(struct work *work, CURL *curl, char *curl_err_s
             else
                 strcpy(workclone, "O");
 
-        if (work->work_difficulty < 1)
+            if (work->work_difficulty < 1)
                 diffplaces = 6;
 
             snprintf(worktime, sizeof(worktime),
@@ -3398,7 +3402,7 @@ static bool submit_upstream_work(struct work *work, CURL *curl, char *curl_err_s
     if (cgpu->dev_start_tv.tv_sec == 0)
         dev_runtime = total_secs;
     else {
-        cgmtime(&now);
+        cgtime(&now);
         dev_runtime = tdiff(&now, &(cgpu->dev_start_tv));
     }
 
@@ -3577,6 +3581,7 @@ static inline struct pool* select_pool(bool lagging)
         if (++rotating_pool >= total_pools)
             rotating_pool = 0;
     }
+
     /* If there are no alive pools with quota, choose according to
      * priority. */
     if (!pool) {
@@ -3625,12 +3630,6 @@ static double le256todouble(const void *target)
     dcut64 += le64toh(*data64);
 
     return (dcut64);
-}
-
-double le256todiff(const void *le256, double diff_multiplier) {
-	double d64 = diff_multiplier * truediffone;
-	double s64 = le256todouble(le256);
-	return d64 / (s64 + 1.);
 }
 
 
@@ -4248,16 +4247,11 @@ static bool stale_work(struct work *work, bool share)
     struct pool *pool;
     int getwork_delay;
 
-    pool = work->pool;
-
-    if((pool->algorithm.type != ALGO_CRYPTONIGHT) &&
-      (pool->algorithm.type != ALGO_CRYPTONIGHT_LITE)) {
-        if (work->work_block != work_block) {
-            applog(LOG_DEBUG, "Work stale due to block mismatch");
-            return (true);
-        }
+    if (work->work_block != work_block) {
+        applog(LOG_DEBUG, "Work stale due to block mismatch");
+        return (true);
     }
-    
+
     /* Technically the rolltime should be correct but some pools
      * advertise a broken expire= that is lower than a meaningful
      * scantime */
@@ -4265,7 +4259,8 @@ static bool stale_work(struct work *work, bool share)
         work_expiry = work->rolltime;
     else
         work_expiry = opt_expiry;
-    
+
+    pool = work->pool;
 
     if (!share && pool->has_stratum) {
         bool same_job;
@@ -4467,6 +4462,7 @@ void __switch_pools(struct pool *selected, bool saveprio)
         init_pool = pool->pool_no;
 
 #ifdef USE_BAIKAL
+        applog(LOG_NOTICE, "Startup BaikalMiner initialization... Using settings from pool %s.", get_pool_name(pool));
         apply_initial_baikal_settings(pool);
 #endif 
 
@@ -4549,8 +4545,8 @@ static void* restart_thread(void __maybe_unused *arg)
                 continue;
             if (cgpu->deven != DEV_ENABLED)
                 continue;
-            mining_thr[i]->work_restart = true;    
-            cgpu->drv->flush_work(cgpu);            
+            mining_thr[i]->work_restart = true;
+            cgpu->drv->flush_work(cgpu);
         }
         rd_unlock(&mining_thr_lock);
     }
@@ -4653,11 +4649,6 @@ static bool test_work_current(struct work *work)
     if (work->mandatory)
         return (ret);
 
-#if SUPPORT_SIAPOOL
-  if (pool->algorithm.type == ALGO_SIA)
-    	flip32(bedata, work->data);
-  else
-#endif  
     swap256(bedata, work->data + 4);
     __bin2hex(hexstr, bedata, 32);
 
@@ -4868,14 +4859,13 @@ void zero_stats(void)
 {
     int i;
 
-    cgmtime(&total_tv_start);
+    cgtime(&total_tv_start);
     total_rolling = 0;
     total_mhashes_done = 0;
     total_getworks = 0;
     total_accepted = 0;
     total_rejected = 0;
-    hw_errors = 0;    
-    hw_errors_bkl = 0;
+    hw_errors = 0;
     total_stale = 0;
     total_discarded = 0;
     local_work = 0;
@@ -4911,7 +4901,6 @@ void zero_stats(void)
     for (i = 0; i < total_devices; ++i) {
         struct cgpu_info *cgpu = get_devices(i);
 
-        //copy_time(&cgpu->dev_start_tv, &total_tv_start);
         mutex_lock(&hash_lock);
         cgpu->total_mhashes = 0;
         cgpu->accepted = 0;
@@ -5420,7 +5409,11 @@ retry:
         cgpu = mining_thr[selected]->cgpu;
         wlogprint("Device %03u:%03u\n", cgpu->usbinfo.bus_number, cgpu->usbinfo.device_address);
         wlogprint("Name %s\n", cgpu->drv->name);
+#ifdef USE_BAIKAL
+        wlogprint("ID %d\n", cgpu->miner_id);
+#else
         wlogprint("ID %d\n", cgpu->device_id);
+#endif
         wlogprint("Enabled: %s\n", cgpu->deven != DEV_DISABLED ? "Yes" : "No");
         wlogprint("Temperature %.1f\n", cgpu->temp);
         wlogprint("MHS av %.0f\n", cgpu->total_mhashes / cgpu_runtime(cgpu));
@@ -5429,7 +5422,7 @@ retry:
         wlogprint("Hardware Errors %d\n", cgpu->hw_errors);
         wlogprint("Last Share Pool %d\n", cgpu->last_share_pool_time > 0 ? cgpu->last_share_pool : -1);
         wlogprint("Total MH %.1f\n", cgpu->total_mhashes);
-        wlogprint("Diff1 Work %f\n", cgpu->diff1); // Changed 26.03.18. Orginal: wlogprint("Diff1 Work %"PRId64"\n", cgpu->diff1);
+        wlogprint("Diff1 Work %"PRId64"\n", cgpu->diff1);
         wlogprint("Difficulty Accepted %.1f\n", cgpu->diff_accepted);
         wlogprint("Difficulty Rejected %.1f\n", cgpu->diff_rejected);
         wlogprint("Last Share Difficulty %.1f\n", cgpu->last_share_diff);
@@ -5524,9 +5517,15 @@ retry:
             if (unlikely(!cgpu))
                 continue;
             if (cgpu->blacklisted) {
+#ifdef USE_BAIKAL
+                wlogprint("%d: %s %d %03u:%03u\n", i, cgpu->drv->name,
+                          cgpu->miner_id, cgpu->usbinfo.bus_number,
+                          cgpu->usbinfo.device_address);
+#else
                 wlogprint("%d: %s %d %03u:%03u\n", i, cgpu->drv->name,
                           cgpu->device_id, cgpu->usbinfo.bus_number,
                           cgpu->usbinfo.device_address);
+#endif
             }
         }
         selected = curses_int("Select device number");
@@ -5557,45 +5556,24 @@ retry:
     }
 #ifdef USE_BAIKAL
     else if (!strncasecmp(&input, "m", 1)) {    /* miner stat */
-        char su[32];
-        int unit_id, chip_id;
+
         struct baikal_info *info;
         struct miner_info *miner;
 
         selected = curses_int("Select device number");
-        if (selected < 0 || selected >= mt)  {        
-            wlogprint("Invalid selection\n");         
-            goto retry;                               
+        if (selected < 0 || selected >= mt)  {
+            wlogprint("Invalid selection\n");
+            goto retry;
         }
-        
+
         cgpu = mining_thr[selected]->cgpu;
-        info = cgpu->device_data;        
+        info = cgpu->device_data;
         miner = &info->miners[cgpu->miner_id];
 
-        wlogprint("--------------------------------- Version ---------------------------------\n"); 
-        wlogprint("MINER : FW(%02x), HW(%02x)\n", miner->fw_ver, miner->hw_ver);
+        wlogprint("--------------------------------- Miner Stats ---------------------------------\n");
+        wlogprint("MINER : fw ver = %02x, hw ver = %02x, asic ver = %02x\n", miner->fw_ver, miner->hw_ver, miner->asic_ver);
+
         goto retry;
-    }
-    else if (!strncasecmp(&input, "~", 1)) {    /* miner stat : hidden */
-        char su[32];
-        int unit_id, chip_id;
-        struct baikal_info *info;
-        struct miner_info *miner;
-
-        selected = curses_int("Select device number");
-        if (selected < 0 || selected >= mt)  {        
-            wlogprint("Invalid selection\n");         
-            goto retry;                               
-        }
-
-        cgpu = mining_thr[selected]->cgpu;
-        info = cgpu->device_data;        
-        miner = &info->miners[cgpu->miner_id];
-
-        wlogprint("------------------------------ [J%d] ------------------------------\n", cgpu->miner_id); 
-        wlogprint("MINER : %02x|%02x|%02x|%02x|%02x|%02x|%02x|%d\n",
-                  miner->asic_count_r, miner->fw_ver, miner->hw_ver, miner->asic_ver, (miner->clock / 10), miner->bbg, hw_errors_bkl, miner->error); 
-        
 
     }
 #endif
@@ -5756,7 +5734,7 @@ static void hashmeter(int thr_id, struct timeval *diff,
 
     /* Totals are updated by all threads so can race without locking */
     mutex_lock(&hash_lock);
-    cgmtime(&temp_tv_end);
+    cgtime(&temp_tv_end);
     timersub(&temp_tv_end, &total_tv_end, &total_diff);
 
     total_mhashes_done += local_mhashes;
@@ -5765,7 +5743,7 @@ static void hashmeter(int thr_id, struct timeval *diff,
     if (total_diff.tv_sec < opt_log_interval)
         goto out_unlock;
     showlog = true;
-    cgmtime(&total_tv_end);
+    cgtime(&total_tv_end);
 
     local_secs = (double)total_diff.tv_sec + ((double)total_diff.tv_usec / 1000000.0);
     decay_time(&total_rolling, local_mhashes_done / local_secs, local_secs);
@@ -5847,9 +5825,7 @@ static bool parse_stratum_response(struct pool *pool, char *s)
     err_val = json_object_get(val, "error");
     id_val = json_object_get(val, "id");
 
-  if ((json_is_null(id_val) || !id_val) && 
-      (pool->algorithm.type != ALGO_CRYPTONIGHT) &&
-      (pool->algorithm.type != ALGO_CRYPTONIGHT_LITE)) {
+  if ((json_is_null(id_val) || !id_val) && (pool->algorithm.type != ALGO_CRYPTONIGHT)) {
   		char *ss;
 
         if (err_val)
@@ -5863,18 +5839,6 @@ static bool parse_stratum_response(struct pool *pool, char *s)
 
         goto out;
     }
-	
-	 json_t *status = json_object_get(res_val, "status");
-
-  if ((status && pool->algorithm.type == ALGO_CRYPTONIGHT) || (status && pool->algorithm.type == ALGO_CRYPTONIGHT_LITE)) {
-    const char *s = json_string_value(status);
-
-    if (s && !strcmp(s, "KEEPALIVED")) {
-      applog(LOG_DEBUG, "Keepalived from %s received", get_pool_name(pool));
-      ret = true;
-      goto out;
-    }
-  }
 
     id = json_integer_value(id_val);
 
@@ -5897,7 +5861,7 @@ static bool parse_stratum_response(struct pool *pool, char *s)
         cg_runlock(&pool->data_lock);
 
     //for cryptonight, the result contains the "status" object which should = "OK" on accept
-    if ((pool->algorithm.type == ALGO_CRYPTONIGHT) || (pool->algorithm.type == ALGO_CRYPTONIGHT_LITE)) {
+    if (pool->algorithm.type == ALGO_CRYPTONIGHT) {
       json_t *res_id, *res_job;
       
       //check if the result contains an id... if so then we need to process as first job, not share response
@@ -5914,10 +5878,7 @@ static bool parse_stratum_response(struct pool *pool, char *s)
         goto out;
       }
       
-      json_t *status = json_object_get(res_val, "status");
-      const char *s = json_string_value(status);
-
-      if (json_is_null(err_val) && status && !strcmp(s, "OK")) {
+      if (json_is_null(err_val) && !strcmp(json_string_value(json_object_get(res_val, "status")), "OK")) {
         success = true;
       }
       else {
@@ -6118,7 +6079,6 @@ static void* stratum_rthread(void *userdata)
 
     while (42) {
         struct timeval timeout;
-        struct timeval timeout_keep_alive;
         int sel_ret;
         fd_set rd;
         char *s;
@@ -6152,21 +6112,6 @@ static void* stratum_rthread(void *userdata)
         FD_SET(pool->sock, &rd);
         timeout.tv_sec = 90;
         timeout.tv_usec = 0;
-
-		/*if ((pool->algorithm.type == ALGO_CRYPTONIGHT && pool->keepalive) ||
-            (pool->algorithm.type == ALGO_CRYPTONIGHT_LITE && pool->keepalive)) {
-          timeout_keep_alive.tv_sec = 60;
-          timeout_keep_alive.tv_usec = 0;
-
-          if (!sock_full(pool) && (sel_ret = select(pool->sock + 1, &rd, NULL, NULL, &timeout_keep_alive)) < 1) {
-            if (sock_keepalived(pool, pool->XMRAuthID, swork_id++)) {
-              applog(LOG_NOTICE, "Stratum %s keepalived sent, id: %d", get_pool_name(pool), swork_id - 1);
-            }
-
-            FD_ZERO(&rd);
-            FD_SET(pool->sock, &rd);
-          }
-        } */
 
         /* The protocol specifies that notify messages should be sent
          * every minute so if we fail to receive any for 90 seconds we
@@ -6220,7 +6165,6 @@ static void* stratum_rthread(void *userdata)
             pool->swork.clean = false;
             switch (pool->algorithm.type) {
             case ALGO_CRYPTONIGHT:
-            case ALGO_CRYPTONIGHT_LITE:
                 gen_stratum_work_cn(pool, work);
                 break;
 
@@ -6257,12 +6201,11 @@ static void* stratum_sthread(void *userdata)
     if (!pool->stratum_q)
         quit(1, "Failed to create stratum_q in stratum_sthread");
 
-
     while (42) {
-        char noncehex[20] , nonce2hex[80] ,  s[4096] = {0};
+        char noncehex[12] , nonce2hex[33] , s[4096] = {0};
         struct stratum_share *sshare;
         uint32_t *hash32, nonce;
-        unsigned char nonce2[32];
+        unsigned char nonce2[16];
         struct work *work;
         bool submitted = false;
 
@@ -6279,7 +6222,7 @@ static void* stratum_sthread(void *userdata)
       		quit(1, "%s: calloc() failed on sshare.", __func__);
     	}
 
-        if ((pool->algorithm.type == ALGO_CRYPTONIGHT) || (pool->algorithm.type == ALGO_CRYPTONIGHT_LITE)) {
+        if (pool->algorithm.type == ALGO_CRYPTONIGHT) {
             char *ASCIIResult;
             uint8_t HashResult[32];
 
@@ -6289,7 +6232,7 @@ static void* stratum_sthread(void *userdata)
 
             applog(LOG_DEBUG, "stratum_sthread() algorithm = %s", pool->algorithm.name);
 
-			char *ASCIINonce = bin2hex(work->data + 39, 4);
+            char *ASCIINonce = bin2hex(&work->XMRNonce, 4);
 
             ASCIIResult = bin2hex(work->hash, 32);
 
@@ -6305,11 +6248,10 @@ static void* stratum_sthread(void *userdata)
         }
 
         else {
-            if (unlikely(work->nonce2_len > 32)) {
+            if (unlikely(work->nonce2_len > 8)) {
                 applog(LOG_ERR, "%s asking for inappropriately long nonce2 length %d", get_pool_name(pool), (int)work->nonce2_len);
                 applog(LOG_ERR, "Not attempting to submit shares");
                 free_work(work);
-                free(sshare);
                 continue;
             }
 
@@ -6334,29 +6276,16 @@ static void* stratum_sthread(void *userdata)
                 nonce = *((uint32_t *)(work->data + 108));
             }
             else if (pool->algorithm.type == ALGO_SIA) {
-#if SUPPORT_SIAPOOL
-                nonce = htobe32(*((uint32_t *)(work->data + 32)));
-#else
                 nonce = *((uint32_t *)(work->data + 32));
-#endif
-            }
-            else if (pool->algorithm.type == ALGO_PASCAL) {
-                nonce = htobe32(*((uint32_t *)(work->data + 196)));
             }
             else {
                 nonce = *((uint32_t *)(work->data + 76));
             }
             __bin2hex(noncehex, (const unsigned char *)&nonce, 4);
 
-#if SUPPORT_SIAPOOL
-            // Sia nonces are actually 64 bits long
-            if (pool->algorithm.type == ALGO_SIA)
-                strcat(noncehex, "00000000");
-#endif
-
             *((uint64_t *)nonce2) = htole64(work->nonce2);
             __bin2hex(nonce2hex, nonce2, work->nonce2_len);
-            memset(s, 0, 4096);
+            memset(s, 0, 1024);
 
             mutex_lock(&sshare_lock);
             /* Give the stratum share a unique id */
@@ -6501,7 +6430,7 @@ retry_stratum:
             if (ret) {
                 init_stratum_threads(pool);
 
-	            if ((pool->algorithm.type == ALGO_CRYPTONIGHT) || (pool->algorithm.type == ALGO_CRYPTONIGHT_LITE)) {
+	            if (pool->algorithm.type == ALGO_CRYPTONIGHT) {
 	                struct work *work = make_work();                    
 	                gen_stratum_work_cn(pool, work);
 	                stage_work(work);
@@ -6842,23 +6771,25 @@ void set_target_neoscrypt(unsigned char *target, double diff, const int thr_id)
  * other means to detect when the pool has died in stratum_thread */
 static void gen_stratum_work_cn(struct pool *pool, struct work *work)
 {
-  if((pool->algorithm.type != ALGO_CRYPTONIGHT) && (pool->algorithm.type != ALGO_CRYPTONIGHT_LITE)) {
+  if(pool->algorithm.type != ALGO_CRYPTONIGHT)
     return;
-  }
 
   applog(LOG_DEBUG, "[THR%d] gen_stratum_work_cn() - algorithm = %s", work->thr_id, pool->algorithm.name);
   
-  cg_rlock(&pool->data_lock);
+  cg_rlock(&pool->data_lock);	
   work->job_id = strdup(pool->swork.job_id);
+  work->XMRTarget = pool->XMRTarget;
   //strcpy(work->XMRID, pool->XMRID);
-  memcpy(work->data, pool->XMRBlob, pool->XMRBlobLen);
-  work->XMRBlobLen = pool->XMRBlobLen;
-  memcpy(work->target, pool->Target, 32);
-  work->sdiff = pool->swork.diff;
+  //work->XMRBlockBlob = strdup(pool->XMRBlockBlob);
+  memcpy(work->XMRBlob, pool->XMRBlob, 76);
+  memcpy(work->data, work->XMRBlob, 76);
+  memset(work->target, 0xFF, 32);
+  work->sdiff = (double)0xffffffff / pool->XMRTarget;
   work->work_difficulty = work->sdiff;
   work->network_diff = pool->diff1;
-  work->is_monero = pool->is_monero;
   cg_runlock(&pool->data_lock);
+  
+  work->target[7] = work->XMRTarget;
   
   local_work++;
   work->pool = pool;
@@ -6869,7 +6800,6 @@ static void gen_stratum_work_cn(struct pool *pool, struct work *work)
   work->getwork_mode = GETWORK_MODE_STRATUM;
 
   work->work_block = work->data[0];
- 
   // Do not allow ntime rolling
   work->drv_rolllimit = 0;
 
@@ -6879,197 +6809,148 @@ static void gen_stratum_work_cn(struct pool *pool, struct work *work)
 }
 static void gen_stratum_work(struct pool *pool, struct work *work)
 {
-  unsigned char merkle_root[32], merkle_sha[65];
-  uint32_t *data32, *swap32;
-  uint64_t nonce2le;
-  int i, j;
+    unsigned char merkle_root[32] , merkle_sha[64];
+    uint32_t * data32,*swap32;
+    uint64_t nonce2le;
+    int i, j;
 
-  cg_wlock(&pool->data_lock);
+    cg_wlock(&pool->data_lock);
 
-    if (pool->algorithm.type == ALGO_PASCAL) {
-        for (i = 0; i < 56; i += 8) {
-            if (((pool->nonce2 >>  i) & 0xff) < 0x2d) pool->nonce2 = (pool->nonce2 & (0xffffffffffffff00 << i)) + (0x002d2d2d2d2d2d2d >> (48 - i));
-            if (((pool->nonce2 >>  i) & 0xff) > 0xfe) pool->nonce2 = (pool->nonce2 & (0xffffffffffffff00 << i)) + (0x012d2d2d2d2d2d2d >> (48 - i));
-        }
-        if (((pool->nonce2 >> 56) & 0xff) < 0x2d) pool->nonce2 = 0x2d2d2d2d2d2d2d2d;
-        if (((pool->nonce2 >> 56) & 0xff) > 0xfe) pool->nonce2 = 0x2d2d2d2d2d2d2d2d;
-    }
     nonce2le = htole64(pool->nonce2);
-#if SUPPORT_SIAPOOL		
-    if (pool->algorithm.type != ALGO_DECRED) {
-#else
     if (pool->algorithm.type != ALGO_DECRED && pool->algorithm.type != ALGO_SIA) {
-#endif	
-    /* Update coinbase. Always use an LE encoded nonce2 to fill in values
-    * from left to right and prevent overflow errors with small n2sizes */
-    memcpy(pool->coinbase + pool->nonce2_offset, &nonce2le, pool->n2size);
-  }
-  
-  work->nonce2 = pool->nonce2++;
-  work->nonce2_len = pool->n2size;
-
-  /* Downgrade to a read lock to read off the pool variables */
-  cg_dwlock(&pool->data_lock);
-    if (pool->algorithm.type != ALGO_DECRED && pool->algorithm.type != ALGO_SIA && pool->algorithm.type != ALGO_PASCAL) {
-
-  /* Generate merkle root */
-    pool->algorithm.gen_hash(pool->coinbase, pool->swork.cb_len, merkle_root);
-    memcpy(merkle_sha, merkle_root, 32);
-    for (i = 0; i < pool->swork.merkles; i++) {
-      memcpy(merkle_sha + 32, pool->swork.merkle_bin[i], 32);
-      gen_hash(merkle_sha, 64, merkle_root);
-      memcpy(merkle_sha, merkle_root, 32);
+        /* Update coinbase. Always use an LE encoded nonce2 to fill in values
+        * from left to right and prevent overflow errors with small n2sizes */
+        memcpy(pool->coinbase + pool->nonce2_offset, &nonce2le, pool->n2size);
     }
-  }
+    work->nonce2 = pool->nonce2++;
+    work->nonce2_len = pool->n2size;
 
-  applog(LOG_DEBUG, "[THR%d] gen_stratum_work() - algorithm = %s", work->thr_id, pool->algorithm.name);
+    /* Downgrade to a read lock to read off the pool variables */
+    cg_dwlock(&pool->data_lock);
 
-  // Different for Neoscrypt because of Little Endian
-  if (pool->algorithm.type == ALGO_NEOSCRYPT) {
-    /* Incoming data is in little endian. */
-    memcpy(merkle_root, merkle_sha, 32);
-
-    uint32_t temp = pool->merkle_offset / sizeof(uint32_t), i;
-    /* Put version (4 byte) + prev_hash (4 byte* 8) but big endian encoded
-    * into work. */
-    for (i = 0; i < temp; ++i) {
-      ((uint32_t *)work->data)[i] = be32toh(((uint32_t *)pool->header_bin)[i]);
+    if (pool->algorithm.type != ALGO_DECRED && pool->algorithm.type != ALGO_SIA) {
+        /* Generate merkle root */
+        pool->algorithm.gen_hash(pool->coinbase, pool->swork.cb_len, merkle_root);
+        memcpy(merkle_sha, merkle_root, 32);
+        for (i = 0; i < pool->swork.merkles; i++) {
+            memcpy(merkle_sha + 32, pool->swork.merkle_bin[i], 32);
+            gen_hash(merkle_sha, 64, merkle_root);
+            memcpy(merkle_sha, merkle_root, 32);
+        }
     }
 
-    /* Now add the merkle_root (4 byte* 8), but it is encoded in little endian. */
-    temp += 8;
+    applog(LOG_DEBUG, "[THR%d] gen_stratum_work() - algorithm = %s", work->thr_id, pool->algorithm.name);
 
-    for (j = 0; i < temp; ++i, ++j) {
-      ((uint32_t *)work->data)[i] = le32toh(((uint32_t *)merkle_root)[j]);
+    // Different for Neoscrypt because of Little Endian
+    if (pool->algorithm.type == ALGO_NEOSCRYPT) {
+        /* Incoming data is in little endian. */
+        memcpy(merkle_root, merkle_sha, 32);
+
+        uint32_t temp = pool->merkle_offset / sizeof(uint32_t), i;
+        /* Put version (4 byte) + prev_hash (4 byte* 8) but big endian encoded
+        * into work. */
+        for (i = 0; i < temp; ++i) {
+            ((uint32_t *)work->data)[i] = be32toh(((uint32_t *)pool->header_bin)[i]);
+        }
+
+        /* Now add the merkle_root (4 byte* 8), but it is encoded in little endian. */
+        temp += 8;
+
+        for (j = 0; i < temp; ++i, ++j) {
+            ((uint32_t *)work->data)[i] = le32toh(((uint32_t *)merkle_root)[j]);
+        }
+
+        /* Add the time encoded in big endianess. */
+        hex2bin((unsigned char *)&temp, pool->swork.ntime, 4);
+
+        /* Add the nbits (big endianess). */
+        ((uint32_t *)work->data)[17] = be32toh(temp);
+        hex2bin((unsigned char *)&temp, pool->swork.nbit, 4);
+        ((uint32_t *)work->data)[18] = be32toh(temp);
+        ((uint32_t *)work->data)[20] = 0x80000000;
+        ((uint32_t *)work->data)[31] = 0x00000280;
     }
-
-    /* Add the time encoded in big endianess. */
-    hex2bin((unsigned char *)&temp, pool->swork.ntime, 4);
-
-    /* Add the nbits (big endianess). */
-    ((uint32_t *)work->data)[17] = be32toh(temp);
-    hex2bin((unsigned char *)&temp, pool->swork.nbit, 4);
-    ((uint32_t *)work->data)[18] = be32toh(temp);
-    ((uint32_t *)work->data)[20] = 0x80000000;
-    ((uint32_t *)work->data)[31] = 0x00000280;
-  }
-  else if (pool->algorithm.type == ALGO_DECRED) {
-    uint16_t vote = (uint16_t) (opt_vote << 1) | 1;
-    size_t nonce2_offset = MIN(pool->n1_len, 36);
-    memcpy(work->data, pool->header_bin, 4); // version
-    flip32(work->data + 4, pool->header_bin + 4); // prevhash
-    memcpy(work->data + 4 + 32, pool->coinbase, MIN((int)pool->swork.cb_len, 108));
-    memcpy(work->data + 100, &vote, 2);
-    for (i = 36; i < 45; i++)
-      ((uint32_t *)work->data)[i] = 0;
-    memcpy(work->data + 144, pool->nonce1bin, nonce2_offset);
-    memcpy(work->data + 144 + nonce2_offset, &nonce2le, pool->n2size);
-    size_t extranonce_len = MAX((int)pool->swork.cb_len - pool->nonce2_offset - pool->n2size, 0);
-    memcpy(work->data + 180 - extranonce_len, pool->coinbase + pool->nonce2_offset + pool->n2size, extranonce_len);
-  }
+    else if (pool->algorithm.type == ALGO_DECRED) {
+        uint16_t vote = (uint16_t)(opt_vote << 1) | 1;
+        size_t nonce2_offset = MIN(pool->n1_len, 36);
+        memcpy(work->data, pool->header_bin, 4); // version
+        flip32(work->data + 4, pool->header_bin + 4); // prevhash
+        memcpy(work->data + 4 + 32, pool->coinbase, MIN((int)pool->swork.cb_len, 108));
+        memcpy(work->data + 100, &vote, 2);
+        for (i = 36; i < 45; i++)
+            ((uint32_t *)work->data)[i] = 0;
+        memcpy(work->data + 144, pool->nonce1bin, nonce2_offset);
+        memcpy(work->data + 144 + nonce2_offset, &nonce2le, pool->n2size);
+    }
     else if (pool->algorithm.type == ALGO_SIA) {
-#if SUPPORT_SIAPOOL
-	 	unsigned char *cbbuf = alloca(1 + pool->swork.cb_len);
-	    cbbuf[0] = 0;
-    	memcpy(cbbuf + 1, pool->coinbase, pool->swork.cb_len);
-    	if (pool->algorithm.gen_hash == NULL) {        	
-	        applog(LOG_ERR, "gen_stratum_work : genHash is NULL");        
-	    }
-	    pool->algorithm.gen_hash(cbbuf, 1 + pool->swork.cb_len, merkle_root);
-	    merkle_sha[0] = 1;
-	    memcpy(merkle_sha + 33, merkle_root, 32);
-	    for (i = 0; i < pool->swork.merkles; i++) {
-		      memcpy(merkle_sha + 1, pool->swork.merkle_bin[i], 32);
-		      pool->algorithm.gen_hash(merkle_sha, 65, merkle_root);
-		      memcpy(merkle_sha + 33, merkle_root, 32);
-	    }
-	    memcpy(merkle_sha, merkle_root, 32);
-	    data32 = (uint32_t *)merkle_sha;
-	    swap32 = (uint32_t *)merkle_root;
-    	flip32(swap32, data32);
-
-	    /* Copy the data template from header_bin */
-    	memcpy(work->data, pool->header_bin, 128);
-	    memcpy(work->data + pool->merkle_offset, merkle_root, 32);
-#else
         size_t nonce2_offset = MIN(pool->n1_len, 4);
         swab256(work->data, pool->header_bin + 4); // prevhash
         memcpy(work->data + 32 + 4, pool->nonce1bin, nonce2_offset);
         memcpy(work->data + 32 + 4 + nonce2_offset, &nonce2le, pool->n2size);
         memcpy(work->data + 32 + 8, pool->header_bin + 68, 4); // timestamp
         flip32(work->data + 32 + 8 + 8, pool->coinbase); // merkleroot
-#endif			
     }
-    else if (pool->algorithm.type == ALGO_PASCAL) {
-      uint32_t temp;
-      memcpy(work->data, pool->coinbase, pool->swork.cb_len);
-      hex2bin((unsigned char *)&temp, pool->swork.ntime, 4);
-      ((uint32_t *)work->data)[48] = be32toh(temp);
-      ((uint32_t *)work->data)[49] = 0;
+    else {
+        data32 = (uint32_t *)merkle_sha;
+        swap32 = (uint32_t *)merkle_root;
+        flip32(swap32, data32);
+
+        /* Copy the data template from header_bin */
+        memcpy(work->data, pool->header_bin, 128);
+        memcpy(work->data + pool->merkle_offset, merkle_root, 32);
     }
-  else {
-    data32 = (uint32_t *)merkle_sha;
-    swap32 = (uint32_t *)merkle_root;
-    flip32(swap32, data32);
 
-    /* Copy the data template from header_bin */
-    memcpy(work->data, pool->header_bin, 128);
-    memcpy(work->data + pool->merkle_offset, merkle_root, 32);
-  }
+    /* Store the stratum work diff to check it still matches the pool's
+    * stratum diff when submitting shares */
+    work->sdiff = pool->swork.diff;
 
-  /* Store the stratum work diff to check it still matches the pool's
-  * stratum diff when submitting shares */
-  work->sdiff = pool->swork.diff;
+    /* Copy parameters required for share submission */
+    work->job_id = strdup(pool->swork.job_id);
+    work->nonce1 = strdup(pool->nonce1);
+    work->ntime = strdup(pool->swork.ntime);
+    cg_runlock(&pool->data_lock);
 
-  /* Copy parameters required for share submission */
-  work->job_id = strdup(pool->swork.job_id);
-  work->nonce1 = strdup(pool->nonce1);
-  work->ntime = strdup(pool->swork.ntime);
-  cg_runlock(&pool->data_lock);
-
-  if (opt_debug) {
-    char *header, *merkle_hash;
-    int datasize = 128;
+    if (opt_debug) {
+        char *header, *merkle_hash;
+        int datasize = 128;
         if (pool->algorithm.type == ALGO_DECRED)
             datasize = 180;
-	    else if (pool->algorithm.type == ALGO_PASCAL) 
-			datasize = 256;
 
-    header = bin2hex(work->data, datasize);
-        if (pool->algorithm.type != ALGO_DECRED && pool->algorithm.type != ALGO_PASCAL) {
-        merkle_hash = bin2hex((const unsigned char *)merkle_root, 32);
-        applog(LOG_DEBUG, "[THR%d] Generated stratum merkle %s", work->thr_id, merkle_hash);
-        free(merkle_hash);
+        header = bin2hex(work->data, datasize);
+        if (pool->algorithm.type != ALGO_DECRED) {
+            merkle_hash = bin2hex((const unsigned char *)merkle_root, 32);
+            applog(LOG_DEBUG, "[THR%d] Generated stratum merkle %s", work->thr_id, merkle_hash);
+            free(merkle_hash);
+        }
+        applog(LOG_DEBUG, "[THR%d] Generated stratum header %s", work->thr_id, header);
+        applog(LOG_DEBUG, "[THR%d] Work job_id %s nonce2 %"PRIu64" ntime %s", work->thr_id, work->job_id,
+               work->nonce2, work->ntime);
+        free(header);
     }
-    applog(LOG_DEBUG, "[THR%d] Generated stratum header %s", work->thr_id, header);
-    applog(LOG_DEBUG, "[THR%d] Work job_id %s nonce2 %"PRIu64" ntime %s", work->thr_id, work->job_id,
-           work->nonce2, work->ntime);
-    free(header);
-  }
 
-  // For Neoscrypt use set_target_neoscrypt() function
-  if (pool->algorithm.type == ALGO_NEOSCRYPT) {
-    set_target_neoscrypt(work->target, work->sdiff, work->thr_id);
+    // For Neoscrypt use set_target_neoscrypt() function
+    if (pool->algorithm.type == ALGO_NEOSCRYPT) {
+        set_target_neoscrypt(work->target, work->sdiff, work->thr_id);
     }
     else {
         if (pool->algorithm.calc_midstate)
             pool->algorithm.calc_midstate(work);
-    set_target(work->target, work->sdiff, pool->algorithm.diff_multiplier2, work->thr_id);
-  }
+        set_target(work->target, work->sdiff, pool->algorithm.diff_multiplier2, work->thr_id);
+    }
 
-  local_work++;
-  work->pool = pool;
-  work->stratum = true;
-  work->blk.nonce = 0;
-  work->id = total_work++;
-  work->longpoll = false;
-  work->getwork_mode = GETWORK_MODE_STRATUM;
-  work->work_block = work_block;
-  /* Nominally allow a driver to ntime roll 60 seconds */
-  work->drv_rolllimit = 60;
-  calc_diff(work, work->sdiff);
+    local_work++;
+    work->pool = pool;
+    work->stratum = true;
+    work->blk.nonce = 0;
+    work->id = total_work++;
+    work->longpoll = false;
+    work->getwork_mode = GETWORK_MODE_STRATUM;
+    work->work_block = work_block;
+    /* Nominally allow a driver to ntime roll 60 seconds */
+    work->drv_rolllimit = 60;
+    calc_diff(work, work->sdiff);
 
-  cgtime(&work->tv_staged);
+    cgtime(&work->tv_staged);
 }
 
 static void enable_devices(void)
@@ -7100,8 +6981,30 @@ static void enable_devices(void)
 #ifdef USE_BAIKAL
 static void apply_initial_baikal_settings(struct pool *pool)
 {
-    // Do nothing.
+    int i;
+    const char *opt;
+    unsigned long options;  //gpu adl options to apply
+    unsigned int needed_threads = 0; //number of mining threads needed after we change devices
+
     applog(LOG_NOTICE, "Startup Pool No = %d", pool->pool_no);
+
+    //get compare options
+    //options = compare_pool_settings(NULL, pool);
+
+    //apply gpu settings
+    rd_lock(&mining_thr_lock);
+
+    //apply_switcher_options(options, pool);
+
+    //manually apply algorithm    
+    for (i = 0; i < mining_threads; i++) {
+        mining_thr[i]->cgpu->algorithm = pool->algorithm;
+        mining_thr[i]->cgpu->total_mhashes = 0;
+        applog(LOG_DEBUG, "Set Miner %d to %s", i, isnull(pool->algorithm.name, ""));
+        /* TODO : */
+    }
+
+    rd_unlock(&mining_thr_lock);    
 }
 #endif 
 
@@ -7633,143 +7536,8 @@ static void get_work_prepare_thread(struct thr_info *mythr, struct work *work)
         zero_stats();
 
         //apply switcher options
-        apply_switcher_options(pool_switch_options, work->pool);
-
-        //devices
-        /*if(opt_isset(pool_switch_options, SWITCHER_APPLY_DEVICE))
-        {
-          //reset devices flags
-          opt_devs_enabled = 0;
-          for (i = 0; i < MAX_DEVICES; i++)
-              devices_enabled[i] = false;
-    
-          //assign pool devices if any
-          if(!empty_string((opt = get_pool_setting(work->pool->devices, ((!empty_string(default_profile.devices))?default_profile.devices:"all"))))) {
-            set_devices((char *)opt);
-          }
-        }
-    
-        //lookup gap
-        if(opt_isset(pool_switch_options, SWITCHER_APPLY_LG))
-        {
-          if(!empty_string((opt = get_pool_setting(work->pool->lookup_gap, default_profile.lookup_gap))))
-            set_lookup_gap((char *)opt);
-        }
-    
-        //raw intensity from pool
-        if(opt_isset(pool_switch_options, SWITCHER_APPLY_RAWINT))
-        {
-          applog(LOG_DEBUG, "Switching to rawintensity: pool = %s, default = %s", work->pool->rawintensity, default_profile.rawintensity);
-          opt = get_pool_setting(work->pool->rawintensity, default_profile.rawintensity);
-          applog(LOG_DEBUG, "rawintensity -> %s", opt);
-          set_rawintensity(opt);
-        }
-        //xintensity
-        else if(opt_isset(pool_switch_options, SWITCHER_APPLY_XINT))
-        {
-          applog(LOG_DEBUG, "Switching to xintensity: pool = %s, default = %s", work->pool->xintensity, default_profile.xintensity);
-          opt = get_pool_setting(work->pool->xintensity, default_profile.xintensity);
-          applog(LOG_DEBUG, "xintensity -> %s", opt);
-          set_xintensity(opt);
-        }
-        //intensity
-        else if(opt_isset(pool_switch_options, SWITCHER_APPLY_INT))
-        {
-          applog(LOG_DEBUG, "Switching to intensity: pool = %s, default = %s", work->pool->intensity, default_profile.intensity);
-          opt = get_pool_setting(work->pool->intensity, default_profile.intensity);
-          applog(LOG_DEBUG, "intensity -> %s", opt);
-          set_intensity(opt);
-        }
-        //default basic intensity
-        else if(opt_isset(pool_switch_options, SWITCHER_APPLY_INT8))
-        {
-          default_profile.intensity = strdup("8");
-          set_intensity(default_profile.intensity);
-        }
-    
-        //shaders
-        if(opt_isset(pool_switch_options, SWITCHER_APPLY_SHADER))
-        {
-          if(!empty_string((opt = get_pool_setting(work->pool->shaders, default_profile.shaders))))
-            set_shaders((char *)opt);
-        }
-    
-        //thread-concurrency
-        if(opt_isset(pool_switch_options, SWITCHER_APPLY_TC))
-        {
-          // neoscrypt - if not specified set TC to 0 so that TC will be calculated by intensity settings
-          if (work->pool->algorithm.type == ALGO_NEOSCRYPT) {
-            opt = ((empty_string(work->pool->thread_concurrency))?"0":get_pool_setting(work->pool->thread_concurrency, default_profile.thread_concurrency));
-          }
-          // otherwise use pool/profile setting or default to default profile setting
-          else {
-            opt = get_pool_setting(work->pool->thread_concurrency, default_profile.thread_concurrency);
-          }
-    
-          if(!empty_string(opt)) {
-            set_thread_concurrency((char *)opt);
-          }
-        }
-    
-        //worksize
-        if(opt_isset(pool_switch_options, SWITCHER_APPLY_WORKSIZE))
-        {
-          if(!empty_string((opt = get_pool_setting(work->pool->worksize, default_profile.worksize))))
-            set_worksize(opt);
-        }
-    
-        #ifdef HAVE_ADL
-          //GPU clock
-          if(opt_isset(pool_switch_options, SWITCHER_APPLY_GPU_ENGINE))
-          {
-            if(!empty_string((opt = get_pool_setting(work->pool->gpu_engine, default_profile.gpu_engine))))
-              set_gpu_engine((char *)opt);
-          }
-    
-          //GPU memory clock
-          if(opt_isset(pool_switch_options, SWITCHER_APPLY_GPU_MEMCLOCK))
-          {
-            if(!empty_string((opt = get_pool_setting(work->pool->gpu_memclock, default_profile.gpu_memclock))))
-              set_gpu_memclock((char *)opt);
-          }
-    
-          //GPU fans
-          if(opt_isset(pool_switch_options, SWITCHER_APPLY_GPU_FAN))
-          {
-            if(!empty_string((opt = get_pool_setting(work->pool->gpu_fan, default_profile.gpu_fan))))
-              set_gpu_fan((char *)opt);
-          }
-    
-          //GPU powertune
-          if(opt_isset(pool_switch_options, SWITCHER_APPLY_GPU_POWERTUNE))
-          {
-            if(!empty_string((opt = get_pool_setting(work->pool->gpu_powertune, default_profile.gpu_powertune))))
-              set_gpu_powertune((char *)opt);
-          }
-    
-          //GPU vddc
-          if(opt_isset(pool_switch_options, SWITCHER_APPLY_GPU_VDDC))
-          {
-            if(!empty_string((opt = get_pool_setting(work->pool->gpu_vddc, default_profile.gpu_vddc))))
-              set_gpu_vddc((char *)opt);
-          }
-    
-          //apply gpu settings
-          for (i = 0; i < nDevs; i++)
-          {
-            if(opt_isset(pool_switch_options, SWITCHER_APPLY_GPU_ENGINE))
-              set_engineclock(i, gpus[i].min_engine);
-            if(opt_isset(pool_switch_options, SWITCHER_APPLY_GPU_MEMCLOCK))
-              set_memoryclock(i, gpus[i].gpu_memclock);
-            if(opt_isset(pool_switch_options, SWITCHER_APPLY_GPU_FAN))
-              set_fanspeed(i, gpus[i].min_fan);
-            if(opt_isset(pool_switch_options, SWITCHER_APPLY_GPU_POWERTUNE))
-              set_powertune(i, gpus[i].gpu_powertune);
-            if(opt_isset(pool_switch_options, SWITCHER_APPLY_GPU_VDDC))
-              set_vddc(i, gpus[i].gpu_vddc);
-          }
-        #endif
-      */
+        apply_switcher_options(pool_switch_options, work->pool);        
+        
         // Change algorithm for each thread (thread_prepare calls initCl)
         if (opt_isset(pool_switch_options, SWITCHER_SOFT_RESET))
             applog(LOG_DEBUG, "Soft Reset... Restarting threads...");
@@ -7951,85 +7719,42 @@ static void submit_work_async(struct work *work)
 
 void inc_hw_errors(struct thr_info *thr)
 {
-#if 0
-    mutex_lock(&stats_lock);
-    thr->cgpu->hw_errors_real++;
-    hw_errors_real++;
-
-    if ((thr->cgpu->accepted > 10) && (thr->cgpu->hw_errors_real > (thr->cgpu->accepted / 2))) {
-        thr>cgpu->hw_errors = thr->cgpu->hw_errors_real;
-        hw_errors = hw_errors_real;
-    }
-    mutex_unlock(&stats_lock);
-#else 
 #ifdef USE_BAIKAL
-    applog(LOG_INFO, "[THR%d] %s%d:%d: invalid nonce - HW error", thr->id, thr->cgpu->drv->name,
-           thr->cgpu->device_id,
+    applog(LOG_INFO, "[THR%d] %s%d: invalid nonce - HW error", thr->id, thr->cgpu->drv->name,
            thr->cgpu->miner_id);
 #else
     applog(LOG_INFO, "[THR%d] %s%d: invalid nonce - HW error", thr->id, thr->cgpu->drv->name,
            thr->cgpu->device_id);
 #endif
+
     mutex_lock(&stats_lock);
-        
     hw_errors++;
     thr->cgpu->hw_errors++;
-
     mutex_unlock(&stats_lock);
 
     thr->cgpu->drv->hw_error(thr);
-#endif 
 }
 
 /* Fills in the work nonce and builds the output data in work->hash */
 static void rebuild_nonce(struct work *work, uint32_t nonce)
 {
     uint32_t nonce_pos = 76;
-	
-    if (work->pool->algorithm.type == ALGO_CRE) {
+    if (work->pool->algorithm.type == ALGO_CRE)
         nonce_pos = 140;
-	    uint32_t *work_nonce = (uint32_t *)(work->data + nonce_pos);
-	    *work_nonce = htole32(nonce);
-	}
-    else if (work->pool->algorithm.type == ALGO_DECRED) {
+    else if (work->pool->algorithm.type == ALGO_DECRED)
         nonce_pos = 140;
-	    uint32_t *work_nonce = (uint32_t *)(work->data + nonce_pos);
-	    *work_nonce = htole32(nonce);
-	}
-    else if (work->pool->algorithm.type == ALGO_LBRY) {
+    else if (work->pool->algorithm.type == ALGO_LBRY)
         nonce_pos = 108;
-	    uint32_t *work_nonce = (uint32_t *)(work->data + nonce_pos);
-	    *work_nonce = htole32(nonce);
-	}
-    else if (work->pool->algorithm.type == ALGO_SIA) {
-	    nonce_pos = 32;
-		uint32_t *work_nonce = (uint32_t *)(work->data + nonce_pos);
-        *work_nonce = htole32(nonce);
-	}
-	else if (work->pool->algorithm.type == ALGO_CRYPTONIGHT) {
-	    uint32_t *work_nonce = (uint32_t *)(work->data + 39);        
-        if ((work->pool != NULL) && (strstr(work->pool->rpc_url, "nicehash") != NULL)) {
-            *work_nonce &= 0xFF000000;
-            *work_nonce |= (htole32(nonce) & 0xFFFFFF);
-        }
-        else {
-            *work_nonce = htole32(nonce);
-        }	    
-	}		
-    else if (work->pool->algorithm.type == ALGO_CRYPTONIGHT_LITE) {
-	    uint32_t *work_nonce = (uint32_t *)(work->data + 39);	    
-        *work_nonce = htole32(nonce);
-	}		
-    else if (work->pool->algorithm.type == ALGO_PASCAL) {
-        nonce_pos = 196;		
-	    uint32_t *work_nonce = (uint32_t *)(work->data + nonce_pos);
-	    *work_nonce = htole32(nonce);
-		}
-	else {
-	    uint32_t *work_nonce = (uint32_t *)(work->data + nonce_pos);
-	    *work_nonce = htole32(nonce);
-	}
-	work->pool->algorithm.regenhash(work);
+    else if (work->pool->algorithm.type == ALGO_SIA)
+        nonce_pos = 32;
+	else if (work->pool->algorithm.type == ALGO_CRYPTONIGHT)
+        nonce_pos = 39;
+
+    uint32_t *work_nonce = (uint32_t *)(work->data + nonce_pos);
+
+    *work_nonce = htole32(nonce);
+
+    work->pool->algorithm.regenhash(work);
 }
 
 /* For testing a nonce against diff 1 */
@@ -8045,27 +7770,25 @@ bool test_nonce(struct work *work, uint32_t nonce)
         || work->pool->algorithm.type == ALGO_YESCRYPT || work->pool->algorithm.type == ALGO_YESCRYPT_MULTI) {
         diff1targ = ((uint32_t *)work->target)[7];
     }
-	else if ((work->pool->algorithm.type == ALGO_CRYPTONIGHT) ||
-             (work->pool->algorithm.type == ALGO_CRYPTONIGHT_LITE)) {        
-		diff1targ = *(uint32_t *)(work->target + 28);
+	else if (work->pool->algorithm.type == ALGO_CRYPTONIGHT) {
+        return (((uint32_t *)work->hash)[7] <= work->XMRTarget);
     }
     else {
         diff1targ = work->pool->algorithm.diff1targ;
     }
-
-    //applog(LOG_ERR, "%x : %x", le32toh(*hash_32), diff1targ);
 
     return (le32toh(*hash_32) <= diff1targ);
 }
 
 static void update_work_stats(struct thr_info *thr, struct work *work)
 {
-  double test_diff = current_diff;
+    double test_diff = current_diff;
 
+    work->share_diff = share_diff(work);
 
-  work->share_diff = share_diff(work);
+    test_diff *= work->pool->algorithm.share_diff_multiplier;
 
-    if (unlikely(test_diff > 0 && work->share_diff >= test_diff)) {
+    if (unlikely(work->share_diff >= test_diff)) {
         work->block = true;
         work->pool->solved++;
         found_blocks++;
@@ -8074,62 +7797,30 @@ static void update_work_stats(struct thr_info *thr, struct work *work)
     }
 
     mutex_lock(&stats_lock);
-	total_diff1++; // += work->device_diff;
-	thr->cgpu->diff1++; // += work->device_diff;
-	work->pool->diff1++; // += work->device_diff;
+    total_diff1 += work->device_diff;
+    thr->cgpu->diff1 += work->device_diff;
+    work->pool->diff1 += work->device_diff;
     thr->cgpu->last_device_valid_work = time(NULL);
     mutex_unlock(&stats_lock);
-}
-
-// TripleS
-void print_msg_hash(struct work *work, int n, unsigned int nonce)
-{
-    int i;
-    // print work_data
-    mutex_lock(&console_lock);
-
-    printf("\n============================================================\n");
-    printf("Work Data : \n");
-    for (i = 0; i < n; i++) {
-        if ((i > 0) && (i % 10 == 0)) {
-            printf("\n");
-        }
-        printf("0x%02x, ", work->data[i]);
-    }
-    printf("\n============================================================\n");
-    printf("Hash : \n");
-    // print hash
-    for (i = 0; i < 32; i++) {
-        if ((i > 0) && (i % 10 == 0)) {
-            printf("\n");
-        }
-        printf("0x%02x, ", work->hash[i]);
-    }
-    printf("\n============================================================\n");
-    printf("nonce : 0x%08x\n", nonce);
-    printf("target : 0x%08x\n", work->pool->algorithm.diff1targ);
-
-    mutex_unlock(&console_lock);
 }
 
 /* To be used once the work has been tested to be meet diff1 and has had its
  * nonce adjusted. Returns true if the work target is met. */
 bool submit_tested_work(struct thr_info *thr, struct work *work)
 {
-  struct work *work_out;
-  update_work_stats(thr, work);
+    struct work *work_out;
+    update_work_stats(thr, work);
 
-    if ((work->pool->algorithm.type == ALGO_CRYPTONIGHT) ||
-	    (work->pool->algorithm.type == ALGO_CRYPTONIGHT_LITE)	) {
-    }
+     if (work->pool->algorithm.type == ALGO_CRYPTONIGHT) {
+	 }
     else if (!fulltest(work->hash, work->target)) {
-    applog(LOG_INFO, "%s %d: Share above target", thr->cgpu->drv->name,
-           thr->cgpu->device_id);
+        applog(LOG_INFO, "%s %d: Share above target", thr->cgpu->drv->name,
+               thr->cgpu->device_id);
         return (false);
-  }
-  work_out = copy_work(work);
-  submit_work_async(work_out);
-    return (true); 
+    }
+    work_out = copy_work(work);
+    submit_work_async(work_out);
+    return (true);
 }
 
 /* Returns true if nonce for work was a valid share */
@@ -8140,9 +7831,7 @@ bool submit_nonce(struct thr_info *thr, struct work *work, uint32_t nonce)
         return (true);
     }
 
-#if BAIKAL_EN_HWE
     inc_hw_errors(thr);
-#endif
     return (false);
 }
 
@@ -8345,34 +8034,29 @@ static void hash_sole_work(struct thr_info *mythr)
     cgpu->deven = DEV_DISABLED;
 }
 
-
-
-
-
-
 /* This version of hash_work is for devices drivers that want to do their own
  * work management entirely, usually by using get_work(). Note that get_work
  * is a blocking function and will wait indefinitely if no work is available
  * so this must be taken into consideration in the driver. */
 void hash_driver_work(struct thr_info *mythr)
 {
-    struct timeval tv_start, tv_end;
+    struct timeval tv_start = {0, 0}, tv_end;
     struct cgpu_info *cgpu = mythr->cgpu;
     struct device_drv *drv = cgpu->drv;
     const int thr_id = mythr->id;
     int64_t hashes_done = 0;
-    cgmtime(&tv_end);
-    copy_time(&tv_start, &tv_end);
 
     while (likely(!cgpu->shutdown)) {
         struct timeval diff;
         int64_t hashes;
 
+        //mythr->work_update = false;
+
         hashes = drv->scanwork(mythr);
 
         /* Reset the bool here in case the driver looks for it
          * synchronously in the scanwork loop. */
-        mythr->work_restart = false;
+        //mythr->work_restart = false;
 
         if (unlikely(hashes == -1)) {
             applog(LOG_ERR, "%s %d failure, disabling!", drv->name, cgpu->device_id);            
@@ -8384,7 +8068,7 @@ void hash_driver_work(struct thr_info *mythr)
         }
 
         hashes_done += hashes;
-        cgmtime(&tv_end);        
+        cgtime(&tv_end);
         timersub(&tv_end, &tv_start, &diff);
         /* Update the hashmeter at most 5 times per second */
         if ((hashes_done && (diff.tv_sec > 0 || diff.tv_usec > 200000)) ||
@@ -8397,10 +8081,8 @@ void hash_driver_work(struct thr_info *mythr)
         if (unlikely(mythr->pause || cgpu->deven != DEV_ENABLED))
             mt_disable(mythr, thr_id, drv);
 
-        if (mythr->work_update) {            
+        if (mythr->work_update)
             drv->update_work(cgpu);
-            mythr->work_update = false;
-        }
     }
     cgpu->deven = DEV_DISABLED;
 }
@@ -8759,8 +8441,6 @@ static void* watchpool_thread(void __maybe_unused *userdata)
                 pool->testing = false;
             }
 
-			sock_keepalived(pool, pool->XMRAuthID, -1);
-
             /* Test pool is idle once every minute */
             if (pool->idle && now.tv_sec - pool->tv_idle.tv_sec > 30) {
                 cgtime(&pool->tv_idle);
@@ -8852,18 +8532,13 @@ static void* watchdog_thread(void __maybe_unused *userdata)
 #endif
                         curses_print_devstatus(cgpu, count++);
             }
-
-/* Not to display off device*/
-#if 0
 #ifdef USE_USBUTILS
             for (i = 0; i < total_devices; i++) {
                 cgpu = get_devices(i);
-                if (cgpu && cgpu->usbinfo.nodev) {
+                if (cgpu && cgpu->usbinfo.nodev)
                     curses_print_devstatus(cgpu, count++);
-                }
             }
 #endif
-#endif 
         }
 
         touchwin(statuswin);
@@ -8930,7 +8605,11 @@ static void* watchdog_thread(void __maybe_unused *userdata)
         int gpu;
 
         cgpu->drv->get_stats(cgpu);
+#ifdef USE_BAIKAL
+        gpu = cgpu->miner_id;
+#else
         gpu = cgpu->device_id;
+#endif
         denable = &cgpu->deven;
         snprintf(dev_str, sizeof(dev_str), "%s%d", cgpu->drv->name, gpu);
 
@@ -9116,7 +8795,7 @@ static void clean_up(bool restarting)
 #ifdef HAVE_ADL
     clear_adl(nDevs);
 #endif
-    cgmtime(&total_tv_end);
+    cgtime(&total_tv_end);
 #ifdef WIN32
     timeEndPeriod(1);
 #endif
@@ -9634,7 +9313,6 @@ static void hotplug_process(void)
         enable_device(cgpu);
         cgpu->sgminer_stats.getwork_wait_min.tv_sec = MIN_SEC_UNSET;
         cgpu->rolling = cgpu->total_mhashes = 0;
-        //cgmtime(&(cgpu->dev_start_tv));
     }
 
     wr_lock(&mining_thr_lock);
@@ -9647,7 +9325,8 @@ static void hotplug_process(void)
         struct cgpu_info *cgpu = devices[total_devices];
         cgpu->thr = cgmalloc(sizeof(*cgpu->thr) * (cgpu->threads + 1));
         cgpu->thr[cgpu->threads] = NULL;
-        cgpu->status = LIFE_INIT;        
+        cgpu->status = LIFE_INIT;
+        //cgtime(&(cgpu->dev_start_tv));
 
         for (j = 0; j < cgpu->threads; ++j) {
             thr = mining_thr[mining_threads];
@@ -9677,7 +9356,7 @@ static void hotplug_process(void)
         }
         total_devices++;
 #ifdef USE_BAIKAL
-        applog(LOG_WARNING, "Hotplug: %s added %s %i:%i", cgpu->drv->dname, cgpu->drv->name, cgpu->device_id, cgpu->miner_id);
+        applog(LOG_WARNING, "Hotplug: %s added %s %i", cgpu->drv->dname, cgpu->drv->name, cgpu->miner_id);
 #else
         applog(LOG_WARNING, "Hotplug: %s added %s %i", cgpu->drv->dname, cgpu->drv->name, cgpu->device_id);
 #endif
@@ -9864,8 +9543,7 @@ static void restart_mining_threads(unsigned int new_n_threads)
         cgpu->thr = (struct thr_info **)malloc(sizeof(struct thr_info *) * (cgpu->threads + 1));
         cgpu->thr[cgpu->threads] = NULL;
         cgpu->status = LIFE_INIT;
-        cgpu->rolling = cgpu->total_mhashes = 0;
-        //cgmtime(&(cgpu->dev_start_tv));
+ 
 
         if (cgpu->deven == DEV_DISABLED && opt_removedisabled) {
             cgpu->threads = 0;
@@ -10207,6 +9885,12 @@ int main(int argc, char *argv[] )
     adj_width(mining_threads, &dev_width);
 #endif
 
+#if USE_USBUTILS
+
+#else
+
+#endif
+
     load_temp_cutoffs();
 
     rd_lock(&devices_lock);
@@ -10279,6 +9963,7 @@ int main(int argc, char *argv[] )
         cgpu->thr = cgmalloc(sizeof(*cgpu->thr) * (cgpu->threads + 1));
         cgpu->thr[cgpu->threads] = NULL;
         cgpu->status = LIFE_INIT;
+        //cgtime(&(cgpu->dev_start_tv));
 
         for (j = 0; j < cgpu->threads; ++j, ++k) {
             thr = mining_thr[k];
@@ -10387,18 +10072,13 @@ int main(int argc, char *argv[] )
         struct cgpu_info *cgpu = devices[i];
 
         cgpu->rolling = cgpu->total_mhashes = 0;
-        //cgmtime(&(cgpu->dev_start_tv));
     }
     rd_unlock(&devices_lock);
 
-    cgmtime(&total_tv_start);
-    cgmtime(&total_tv_end);
-
-    //get_datestamp(datestamp, sizeof(datestamp), &total_tv_start);
-    //launch_time = total_tv_start;
-    cgtime(&launch_time);
-    get_datestamp(datestamp, sizeof(datestamp), &launch_time);
-
+    cgtime(&total_tv_start);
+    cgtime(&total_tv_end);
+    get_datestamp(datestamp, sizeof(datestamp), &total_tv_start);
+    launch_time = total_tv_start;
 
     watchpool_thr_id = 2;
     thr = &control_thr[watchpool_thr_id];
@@ -10539,7 +10219,6 @@ retry:
 
             switch (pool->algorithm.type) {
             case ALGO_CRYPTONIGHT:
-            case ALGO_CRYPTONIGHT_LITE:
                 gen_stratum_work_cn(pool, work);
                 break;
 
@@ -10672,7 +10351,7 @@ size_t nicehash_simplemultialgo_get(const char **algorithm_names, const double *
 
 void* nicehash_sma_thread(void *userdata)
 {
-    const char *anames[5] = {"x11", "quark", "qubit", "nist5"};
+    const char *anames[5] = {"x11", "x13", "x15", "quark", "qubit"};
     int pool_id[5];
     double factors[5] = { 1, 1, 1, 1, 1 };
     int port_out, i, j;

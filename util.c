@@ -47,7 +47,6 @@
 
 #define DEFAULT_SOCKWAIT 60
 extern double opt_diff_mult;
-extern void suffix_string_double(double val, char *buf, size_t bufsiz, int sigdigits);
 
 bool successful_connect = false;
 static void keep_sockalive(SOCKETTYPE fd)
@@ -1092,47 +1091,26 @@ void cgtime(struct timeval *tv)
   tv->tv_usec = lidiv.rem / 10;
 }
 
-void cgmtime(struct timeval *tv)
-{
-  lldiv_t lidiv;
-
-  decius_time(&lidiv);
-  tv->tv_sec = lidiv.quot;
-  tv->tv_usec = lidiv.rem / 10;
-}
-
 #else /* WIN32 */
-void cgtime(struct timeval *tv) 
-{ 
-    //gettimeofday(tv, NULL);
-    struct timespec ts; 
-    clock_gettime(CLOCK_REALTIME, &ts); 
-    tv->tv_sec = ts.tv_sec; 
-    tv->tv_usec   = ts.tv_nsec / 1000;
+void cgtime(struct timeval *tv)
+{
+  gettimeofday(tv, NULL);
 }
 
-void cgmtime(struct timeval *tv) 
-{ 
-    struct timespec ts; 
-    clock_gettime(CLOCK_MONOTONIC, &ts); 
-    tv->tv_sec = ts.tv_sec; 
-    tv->tv_usec   = ts.tv_nsec / 1000;
-}
-
-int cgtimer_to_ms(cgtimer_t *cgt) 
-{ 
-    return (timespec_to_ms(cgt));
+int cgtimer_to_ms(cgtimer_t *cgt)
+{
+  return timespec_to_ms(cgt);
 }
 
 /* Subtracts b from a and stores it in res. */
-void cgtimer_sub(cgtimer_t *a, cgtimer_t *b, cgtimer_t *res) 
-{ 
-    res->tv_sec = a->tv_sec - b->tv_sec; 
-    res->tv_nsec = a->tv_nsec - b->tv_nsec; 
-    if (res->tv_nsec < 0) {
-        res->tv_nsec += 1000000000; 
-        res->tv_sec--;
-    }
+void cgtimer_sub(cgtimer_t *a, cgtimer_t *b, cgtimer_t *res)
+{
+  res->tv_sec = a->tv_sec - b->tv_sec;
+  res->tv_nsec = a->tv_nsec - b->tv_nsec;
+  if (res->tv_nsec < 0) {
+    res->tv_nsec += 1000000000;
+    res->tv_sec--;
+  }
 }
 #endif /* WIN32 */
 
@@ -1189,7 +1167,11 @@ void cgtimer_time(cgtimer_t *ts_start)
 #elif !defined(WIN32) /* __MACH__ - Everything not linux/macosx/win32 */
 void cgtimer_time(cgtimer_t *ts_start)
 {
-  clock_gettime(CLOCK_MONOTONIC, &ts_start);   
+  struct timeval tv;
+
+  cgtime(&tv);
+  ts_start->tv_sec = tv->tv_sec;
+  ts_start->tv_nsec = tv->tv_usec * 1000;
 }
 #endif /* __MACH__ */
 
@@ -1499,19 +1481,6 @@ bool sock_full(struct pool *pool)
   return (socket_full(pool, 0));
 }
 
-bool sock_keepalived(struct pool *pool, const char *rpc2_id, int work_id)
-{
-	bool ret = true;
-	if (!pool->no_keepalive && pool->algorithm.type == ALGO_CRYPTONIGHT) {
-		size_t size = 128 + strlen(rpc2_id);
-		char *s = malloc(size);
-		snprintf(s, size, "{\"method\": \"keepalived\", \"params\": {\"id\": \"%s\"}, \"id\": \"ping\"}", rpc2_id);
-		ret = stratum_send(pool, s, strlen(s));
-		free(s);
-  }
-
-  return ret;
-}
 static void clear_sockbuf(struct pool *pool)
 {
   strcpy(pool->sockbuf, "");
@@ -1748,35 +1717,20 @@ static bool parse_notify(struct pool *pool, json_t *val)
   pool->swork.merkles = merkles;
   if (clean)
     pool->nonce2 = 0;
-  if (pool->algorithm.type == ALGO_SIA) {
-    pool->merkle_offset = strlen(pool->swork.prev_hash) +
-              + 16 + strlen(pool->swork.ntime);
-  } else {
-    pool->merkle_offset = strlen(pool->swork.bbversion) +
-              strlen(pool->swork.prev_hash);
-  }
+  pool->merkle_offset = strlen(pool->swork.bbversion) +
+            strlen(pool->swork.prev_hash);
   pool->merkle_offset /= 2;
   header = (char *)alloca(257);
-  if (pool->algorithm.type == ALGO_SIA) {
-    snprintf(header, 257,
-      "%s%s%s%s",
-      pool->swork.prev_hash,
-      "0000000000000000", /* nonce */
-      pool->swork.ntime,
-      blank_merkel
-    );
-  } else {
-    snprintf(header, 257,
-      "%s%s%s%s%s%s%s",
-      pool->swork.bbversion,
-      pool->swork.prev_hash,
-      blank_merkel,
-      has_trie ? trie : "",
-      pool->swork.ntime,
-      pool->swork.nbit,
-      "00000000" /* nonce */
-    );
-  }
+  snprintf(header, 257,
+    "%s%s%s%s%s%s%s",
+    pool->swork.bbversion,
+    pool->swork.prev_hash,
+    blank_merkel,
+    has_trie ? trie : "",
+    pool->swork.ntime,
+    pool->swork.nbit,
+    "00000000" /* nonce */
+  );
   header_len = strlen(header);
   memset(header + header_len, '0', 256 - header_len);
   header[256] = '\0';
@@ -1786,8 +1740,6 @@ static bool parse_notify(struct pool *pool, json_t *val)
     // TODO: memory leaks? goto out, clean up there?
     return false;
   }
-  if (pool->algorithm.type == ALGO_SIA)
-    flip80(pool->header_bin, pool->header_bin);
 
   cb1 = (unsigned char *)calloc(cb1_len, 1);
   if (unlikely(!cb1))
@@ -1872,21 +1824,21 @@ bool parse_notify_cn(struct pool *pool, json_t *val)
   }
   
   job_id = json_string_value(jid);
-  hex2bin(&XMRTarget, json_string_value(target), 4);
+  //hex2bin(&XMRTarget, json_string_value(target), 4);
+    XMRTarget = bswap_32(strtoul(json_string_value(target), NULL, 16));
 
   cg_wlock(&pool->data_lock);
   
-  free(pool->swork.job_id);
+  if (pool->swork.job_id != NULL) {
+    free(pool->swork.job_id);
+  }
   
   pool->swork.job_id = strdup(job_id);
   pool->swork.clean = true;
-  pool->XMRBlobLen = strlen(blobval) >> 1;
-  pool->diff1 = 0;
-  memcpy(pool->XMRBlob, XMRBlob, pool->XMRBlobLen);
-  memset(pool->Target, 0xff, 28);
-  memcpy(pool->Target + 28, &XMRTarget, 4);
-  pool->swork.diff = (double)UINT32_MAX / XMRTarget;
-  suffix_string_double(pool->swork.diff, pool->diff, sizeof(pool->diff), 0);
+  
+  memcpy(pool->XMRBlob, XMRBlob, 76);
+  pool->XMRTarget = XMRTarget;
+  pool->swork.diff = (double)0xffffffff / XMRTarget;
   pool->getwork_requested++;
   
   cg_wunlock(&pool->data_lock);
@@ -1907,6 +1859,9 @@ bool parse_notify_cn(struct pool *pool, json_t *val)
   if (pool == current_pool())
     opt_work_update = true;
 out:
+  /* Annoying but we must not leak memory */
+  if (job_id != NULL)
+    free(job_id);
   return ret;
 }
 static bool parse_diff(struct pool *pool, json_t *val)
@@ -1944,89 +1899,6 @@ static bool parse_diff(struct pool *pool, json_t *val)
   else {
     applog(LOG_DEBUG, "%s difficulty set to %f", get_pool_name(pool), diff);
   }
-
-  return true;
-}
-
-static bool parse_target(struct pool *pool, json_t *val)
-{
-  uint8_t oldtarget[32], target[32], *str;
-
-  if ((str = json_array_string(val, 0)) == NULL) {
-    applog(LOG_DEBUG, "parse_target: Missing an array value.");
-    return false;
-  }
-
-  hex2bin(target, str, 32);
-
-  cg_wlock(&pool->data_lock);
-  memcpy(oldtarget, pool->Target, 32);
-  swab256(pool->Target, target);
-  cg_wunlock(&pool->data_lock);
-
-  if (memcmp(oldtarget, target, 32) != 0) {
-    applog(pool == current_pool() ? LOG_NOTICE : LOG_DEBUG, "%s target changed to %s", get_pool_name(pool), str);
-  }
-
-  free(str);
-
-  return true;
-}
-
-static bool parse_extranonce_equihash(struct pool *pool, json_t *val)
-{
-  char *n1str;
-
-  if (!(n1str = json_array_string(val, 1))) {
-    return false;
-  }
-  
-  cg_wlock(&pool->data_lock);
-  free(pool->nonce1);
-  pool->nonce1 = n1str;
-  pool->n1_len = strlen(n1str) / 2; //size in bytes of nonce1 in the header
-  
-  free(pool->nonce1bin);
-  if (unlikely(!(pool->nonce1bin = (unsigned char *)calloc(pool->n1_len, 1)))) {
-    quithere(1, "%s: Failed to calloc pool->nonce1bin", __func__);
-  }
-
-  hex2bin(pool->nonce1bin, pool->nonce1, pool->n1_len); 
-  pool->n2size = 64 - pool->n1_len; //size in bytes of nonce2 in the header
-  pool->nonce2 = 0; //reset nonce 2 to 0
-  cg_wunlock(&pool->data_lock);
-  
-  applog(LOG_NOTICE, "%s extranonce set to %s", get_pool_name(pool), n1str);
-
-  return true;
-}
-
-static bool parse_extranonce_ethash(struct pool *pool, json_t *val)
-{
-  char *n1str;
-
-  if (!(n1str = json_array_string(val, 0))) {
-    applog(LOG_NOTICE, "extranonce failed");
-    return false;
-  }
-  applog(LOG_NOTICE, "extranonce: %s", n1str);
-
-  cg_wlock(&pool->data_lock);
-  free(pool->nonce1);
-  pool->nonce1 = n1str;
-  pool->n1_len = strlen(n1str) / 2; //size in bytes of nonce1 in the header
-
-  free(pool->nonce1bin);
-  if (unlikely(!(pool->nonce1bin = (unsigned char *)calloc(pool->n1_len, 1)))) {
-    quithere(1, "%s: Failed to calloc pool->nonce1bin", __func__);
-  }
-
-  hex2bin(pool->nonce1bin, pool->nonce1, pool->n1_len);
-  pool->n2size = 4 - pool->n1_len; //size in bytes of nonce2 in the header
-  pool->nonce2 = 0; //reset nonce 2 to 0
-  cg_wunlock(&pool->data_lock);
-
-  applog(LOG_NOTICE, "%s extranonce set to %s", get_pool_name(pool), n1str);
 
   return true;
 }
@@ -2188,9 +2060,7 @@ bool parse_method(struct pool *pool, char *s)
   if (!buf) {
     goto done;
   }
-  
-  applog(LOG_DEBUG, "We made it to parse_method()!");
-  
+
   if (!strncasecmp(buf, "mining.notify", 13)) {
     if (parse_notify(pool, params)) {
       pool->stratum_notify = ret = true;
@@ -2201,7 +2071,8 @@ bool parse_method(struct pool *pool, char *s)
 
     goto done;
   }
-    if ((pool->algorithm.type == ALGO_CRYPTONIGHT) || (pool->algorithm.type == ALGO_CRYPTONIGHT_LITE)) {
+  
+    if (pool->algorithm.type == ALGO_CRYPTONIGHT) {
     if (!strncasecmp(buf, "job", 3)) {
       if (parse_notify_cn(pool, params)) {
         pool->stratum_notify = ret = true;
@@ -2214,6 +2085,7 @@ bool parse_method(struct pool *pool, char *s)
     }
   }
   
+
   if (!strncasecmp(buf, "mining.set_difficulty", 21) && parse_diff(pool, params)) {
     ret = true;
     goto done;
@@ -2235,11 +2107,6 @@ bool parse_method(struct pool *pool, char *s)
   }
 
   if (!strncasecmp(buf, "client.show_message", 19) && show_message(pool, params)) {
-    ret = true;
-    goto done;
-  }
-
-  if (!strncasecmp(buf, "mining.set_target", 17) && parse_target(pool, params)) {
     ret = true;
     goto done;
   }
@@ -2330,10 +2197,11 @@ bool auth_stratum(struct pool *pool)
   json_error_t err;
   bool ret = false;
 
-  if ((pool->algorithm.type == ALGO_CRYPTONIGHT) || (pool->algorithm.type == ALGO_CRYPTONIGHT_LITE)) {
+  if (pool->algorithm.type == ALGO_CRYPTONIGHT) {
     sprintf(s, "{\"method\": \"login\", \"params\": {\"login\": \"%s\", \"pass\": \"%s\", \"agent\": \"%s/%s\"}, \"id\": 1}",
       pool->rpc_user, pool->rpc_pass, PACKAGE, VERSION);
   
+    
     swork_id++;
   }
   else {
@@ -2381,7 +2249,7 @@ bool auth_stratum(struct pool *pool)
   }
 
   //check if the result contains an id... if so then we need to process as first job
-  if ((pool->algorithm.type == ALGO_CRYPTONIGHT)||(pool->algorithm.type == ALGO_CRYPTONIGHT_LITE)) {
+  if (pool->algorithm.type == ALGO_CRYPTONIGHT) {
     if ((res_id = json_object_get(res_val, "id"))) {
       cg_wlock(&pool->data_lock);
       strcpy(pool->XMRAuthID, json_string_value(res_id));
@@ -2399,7 +2267,6 @@ bool auth_stratum(struct pool *pool)
       }
     }
   }
-  
   ret = true;
   applog(LOG_INFO, "Stratum authorisation success for %s", get_pool_name(pool));
   pool->probed = true;
@@ -2854,23 +2721,20 @@ resend:
   }
 
  //Cryptonight doesn't subscribe...
-	if((pool->algorithm.type == ALGO_CRYPTONIGHT) || (pool->algorithm.type == ALGO_CRYPTONIGHT_LITE))
+	if(pool->algorithm.type == ALGO_CRYPTONIGHT)
 	{
 		if (!pool->stratum_url) { 
           pool->stratum_url = pool->sockaddr_url;
         }
 		
-		cg_wlock(&pool->data_lock);
 		pool->stratum_active = true;
 		pool->next_diff = 0;
 		pool->swork.diff = 1;
 		
 		pool->sessionid = NULL;
-		free(pool->nonce1);
 		pool->nonce1 = NULL;
 		pool->n1_len = 0;
-		pool->n2size = 4;
-		cg_wunlock(&pool->data_lock);
+		
 		json_decref(val);
 		return true;
 	}
@@ -2930,17 +2794,14 @@ resend:
   }
 
   sessionid = get_sessionid(res_val);
-  if (!sessionid) {
+  if (!sessionid)
     applog(LOG_DEBUG, "Failed to get sessionid in initiate_stratum");
-  }
-
   nonce1 = json_array_string(res_val, 1);
   if (!nonce1) {
     applog(LOG_INFO, "Failed to get nonce1 in initiate_stratum");
     free(sessionid);
     goto out;
   }
-  
   n2size = json_integer_value(json_array_get(res_val, 2));
   if (n2size < 1)
   {
@@ -2953,29 +2814,21 @@ resend:
   cg_wlock(&pool->data_lock);
   free(pool->nonce1);
   free(pool->sessionid);
-  
   pool->sessionid = sessionid;
   pool->nonce1 = nonce1;
   pool->n1_len = strlen(nonce1) / 2;
-  
   free(pool->nonce1bin);
-  
   pool->nonce1bin = (unsigned char *)calloc(pool->n1_len, 1);
-  if (unlikely(!pool->nonce1bin)) {
+  if (unlikely(!pool->nonce1bin))
     quithere(1, "Failed to calloc pool->nonce1bin");
-  }
-  
   hex2bin(pool->nonce1bin, pool->nonce1, pool->n1_len);
-  
   pool->n2size = n2size;
   cg_wunlock(&pool->data_lock);
 
-  if (sessionid) {
+  if (sessionid)
     applog(LOG_DEBUG, "%s stratum session id: %s", get_pool_name(pool), pool->sessionid);
-  }
-  
+
   ret = true;
-  
 out:
   if (ret) {
     if (!pool->stratum_url)

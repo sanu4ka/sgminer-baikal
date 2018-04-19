@@ -1,8 +1,6 @@
 #ifndef ALGORITHM_H
 #define ALGORITHM_H
 
-#include "config.h"
-
 #ifdef __APPLE_CC__
 #include <OpenCL/opencl.h>
 #else
@@ -19,14 +17,11 @@
 #include "ocl/build_kernel.h"   // For the build_kernel_data type
 #endif 
 
-#define SUPPORT_SIAPOOL        (1)
-
 typedef enum {
   ALGO_UNK,
   ALGO_CRE,
   ALGO_SCRYPT,
   ALGO_NSCRYPT,
-  ALGO_PASCAL,
   ALGO_X11,
   ALGO_X11GOST,
   ALGO_X13,
@@ -51,17 +46,11 @@ typedef enum {
   ALGO_SIA,
   ALGO_DECRED,
   ALGO_VANILLA,
-  ALGO_LBRY,
+  ALGO_LBRY,  
   ALGO_CRYPTONIGHT,
-  ALGO_CRYPTONIGHT_LITE,
-  ALGO_SKEINCOIN,
-  ALGO_SKEIN2,
   ALGO_QUBIT,
-  ALGO_MYRIAD_GROESTL,
   ALGO_GROESTL,
   ALGO_DIDAMOND,
-  ALGO_NEVACOIN,
-  ALGO_VELTOR,
   ALGO_MAX
 } algorithm_type_t;
 
