@@ -4,7 +4,7 @@ ACLOCAL_AMFLAGS = -I m4
 JANSSON_CPPFLAGS= -I$(top_builddir)/submodules/jansson/src -I$(top_srcdir)/submodules/jansson/src
 
 if WANT_USBUTILS
-USBUTILS_CPPFLAGS = -I$(top_builddir)/submodules/libusb-bk/libusb -I$(top_srcdir)/submodules/libusb-bk/libusb
+USBUTILS_CPPFLAGS = -I$(top_builddir)/submodules/libusb-1.0/libusb -I$(top_srcdir)/submodules/libusb-1.0/libusb
 else
 USBUTILS_CPPFLAGS =
 endif
@@ -82,8 +82,6 @@ sgminer_SOURCES += algorithm/yescrypt.h algorithm/yescrypt.c algorithm/yescrypt_
 sgminer_SOURCES += algorithm/blake256.c algorithm/blake256.h
 sgminer_SOURCES += algorithm/blakecoin.c algorithm/blakecoin.h
 sgminer_SOURCES += algorithm/cryptonight.c algorithm/cryptonight.h algorithm/cn-aes-tbls.h
-sgminer_SOURCES += algorithm/skeincoin.c algorithm/skeincoin.h
-sgminer_SOURCES += algorithm/pascal.c algorithm/pascal.h
 sgminer_SOURCES += algorithm/decred.c algorithm/decred.h
 sgminer_SOURCES += algorithm/lbry.c algorithm/lbry.h
 
@@ -105,5 +103,4 @@ sgminer_SOURCES += adl.c adl.h adl_functions.h
 endif
 
 bin_SCRIPTS	= $(top_srcdir)/kernel/*.cl
-bin_SCRIPTS	+= $(top_srcdir)/kernel/*.h
 
