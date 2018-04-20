@@ -3,7 +3,7 @@
 m4_define([v_maj], [5])
 m4_define([v_min], [5])
 m4_define([v_mic], [2])
-m4_define([v_rev], [B])
+m4_define([v_rev], [b])
 ##--##--##--##--##--##--##--##--##--##--##--##--##--##--##--##--##
 m4_ifdef([v_rev], [m4_define([v_ver], [v_maj.v_min.v_mic-v_rev])], [m4_define([v_ver], [v_maj.v_min.v_mic])])
 m4_define([lt_rev], m4_eval(v_maj + v_min))
@@ -511,7 +511,7 @@ echo
 if test "x$want_usbutils$dlibusb" = xyesyes; then
 echo "*** SYSTEM LIBUSB BEING ADDED - NOT RECOMMENDED UNLESS YOU ARE UNABLE TO COMPILE THE INCLUDED LIBUSB ***"
 echo
-fi#include "config.h"
+fi                                                                                                                                                                                                                                                                                                                                                                                                                                                                            #include "config.h"
 #include <stdio.h>
 #include <ccan/tap/tap.h>
 #include <setjmp.h>
