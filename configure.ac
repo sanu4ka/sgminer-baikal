@@ -288,15 +288,15 @@ if test "x$want_usbutils" != xfalse; then
 			*-*-freebsd*)
 				LIBUSB_LIBS="-lusb"
 				LIBUSB_CFLAGS=""
-				AC_DEFINE(HAVE_LIBUSB, 1, [Define if you have libusb-1.0])
+				AC_DEFINE(HAVE_LIBUSB, 1, [Define if you have libusb-bk])
 				;;
 			*)
-				PKG_CHECK_MODULES(LIBUSB, libusb-1.0, [AC_DEFINE(HAVE_LIBUSB, 1, [Define if you have libusb-1.0])], [AC_MSG_ERROR([Could not find usb library - please install libusb-1.0])])
+				PKG_CHECK_MODULES(LIBUSB, libusb-bk, [AC_DEFINE(HAVE_LIBUSB, 1, [Define if you have libusb-bk])], [AC_MSG_ERROR([Could not find usb library - please install libusb-bk])])
 				;;
 		esac
 	else
 		AC_CONFIG_SUBDIRS([submodules/libusb-1.0])
-		LIBUSB_LIBS="submodules/libusb-1.0/libusb/.libs/libusb-1.0.a"
+		LIBUSB_LIBS="submodules/libusb-bk/libusb/.libs/libusb-1.0.a"
 		if test "x$have_linux" = "xtrue"; then
 			AC_ARG_ENABLE([udev],
 				[AC_HELP_STRING([--disable-udev],[Disable building libusb with udev])],
@@ -511,7 +511,7 @@ echo
 if test "x$want_usbutils$dlibusb" = xyesyes; then
 echo "*** SYSTEM LIBUSB BEING ADDED - NOT RECOMMENDED UNLESS YOU ARE UNABLE TO COMPILE THE INCLUDED LIBUSB ***"
 echo
-fi                                                                                                                                                                                                                                                                                                                                                                                                                                                                            #include <ccan/tap/tap.h>
+fi#include <ccan/tap/tap.h>
 #include <stdarg.h>
 #include <setjmp.h>
 #include <stdlib.h>
@@ -623,7 +623,7 @@ int main(int argc, char *argv[])
 	free(longname);
 	return exit_status();
 }
-                                                                                                                                                                                                                                                                                                                                                                                                         /* Make sure we still work with no options registered */
+/* Make sure we still work with no options registered */
 #include <ccan/tap/tap.h>
 #include <stdlib.h>
 #include <ccan/opt/opt.c>
