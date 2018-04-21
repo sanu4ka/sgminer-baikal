@@ -511,7 +511,8 @@ echo
 if test "x$want_usbutils$dlibusb" = xyesyes; then
 echo "*** SYSTEM LIBUSB BEING ADDED - NOT RECOMMENDED UNLESS YOU ARE UNABLE TO COMPILE THE INCLUDED LIBUSB ***"
 echo
-fi#include <ccan/tap/tap.h>
+fi
+#include <ccan/tap/tap.h>
 #include <stdarg.h>
 #include <setjmp.h>
 #include <stdlib.h>
