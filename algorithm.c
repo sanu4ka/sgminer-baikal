@@ -46,7 +46,6 @@
 #include "algorithm/decred.h"
 #include "algorithm/lbry.h"
 #include "algorithm/sibcoin.h"
-#include "algorithm/cryptonight.h"
 #include "compat.h"
 
 #include <inttypes.h>
@@ -81,8 +80,7 @@ const char *algorithm_type_str[] = {
   "sia",                 
   "decred",              
   "vanilla",             
-  "lbry",                
-  "cryptonight",         
+  "lbry",                        
   "qubit",               
   "groestl",             
   "diamond"              
@@ -1087,66 +1085,6 @@ static cl_int queue_decred_kernel(_clState *clState, dev_blk_ctx *blk, __maybe_u
   return status;
 }
 
-static cl_int queue_cryptonight_kernel(_clState *clState, dev_blk_ctx *blk, __maybe_unused cl_uint threads)
-{
-	cl_kernel *kernel = &clState->kernel;
-	unsigned int num = 0;
-	cl_int status = 0, tgt32 = (blk->work->XMRTarget);
-	cl_ulong le_target = ((cl_ulong)(blk->work->XMRTarget));
-
-	//le_target = *(cl_ulong *)(blk->work->device_target + 24);
-	memcpy(clState->cldata, blk->work->data, 76);
-		
-	status = clEnqueueWriteBuffer(clState->commandQueue, clState->CLbuffer0, true, 0, 76, clState->cldata , 0, NULL, NULL);
-	
-	CL_SET_ARG(clState->CLbuffer0);
-	CL_SET_ARG(clState->Scratchpads);
-	CL_SET_ARG(clState->States);
-	
-	num = 0;
-	kernel = clState->extra_kernels;
-	CL_SET_ARG(clState->Scratchpads);
-	CL_SET_ARG(clState->States);
-	
-	num = 0;
-	CL_NEXTKERNEL_SET_ARG(clState->Scratchpads);
-	CL_SET_ARG(clState->States);
-	CL_SET_ARG(clState->BranchBuffer[0]);
-	CL_SET_ARG(clState->BranchBuffer[1]);
-	CL_SET_ARG(clState->BranchBuffer[2]);
-	CL_SET_ARG(clState->BranchBuffer[3]);
-	
-	num = 0;
-	CL_NEXTKERNEL_SET_ARG(clState->States);
-	CL_SET_ARG(clState->BranchBuffer[0]);
-	CL_SET_ARG(clState->outputBuffer);
-	CL_SET_ARG(tgt32);
-	
-	// last to be set in driver-opencl.c
-	
-	num = 0;
-	CL_NEXTKERNEL_SET_ARG(clState->States);
-	CL_SET_ARG(clState->BranchBuffer[1]);
-	CL_SET_ARG(clState->outputBuffer);
-	CL_SET_ARG(tgt32);
-	
-	
-	num = 0;
-	CL_NEXTKERNEL_SET_ARG(clState->States);
-	CL_SET_ARG(clState->BranchBuffer[2]);
-	CL_SET_ARG(clState->outputBuffer);
-	CL_SET_ARG(tgt32);
-	
-	
-	num = 0;
-	CL_NEXTKERNEL_SET_ARG(clState->States);
-	CL_SET_ARG(clState->BranchBuffer[3]);
-	CL_SET_ARG(clState->outputBuffer);
-	CL_SET_ARG(tgt32);
-	
-	return(status);
-}
-
 static cl_int queue_lbry_kernel(struct __clState *clState, struct _dev_blk_ctx *blk, __maybe_unused cl_uint threads)
 {
   cl_kernel *kernel = &clState->kernel;
@@ -1280,7 +1218,7 @@ static algorithm_settings_t algos[] = {
 
   { "lbry", ALGO_LBRY, "", 1, 256, 256, 0, 0, 0xFF, 0xFFFFULL, 0x0000ffffUL, 2, 4 * 8 * 4194304, 0, lbry_regenhash, NULL, NULL, queue_lbry_kernel, gen_hash, NULL },
 
-  { "cryptonight", ALGO_CRYPTONIGHT, "", (1ULL << 32), (1ULL << 32), (1ULL << 32), 0, 0, 0xFF, 0xFFFFULL, 0x0000ffffUL, 6, 0, 0, cryptonight_regenhash, NULL, NULL, queue_cryptonight_kernel, gen_hash, NULL },
+
   // Terminator (do not remove)
   { NULL, ALGO_UNK, "", 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, NULL, NULL, NULL, NULL, NULL }
 };
