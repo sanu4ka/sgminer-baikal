@@ -4,7 +4,7 @@ ACLOCAL_AMFLAGS = -I m4
 JANSSON_CPPFLAGS= -I$(top_builddir)/submodules/jansson/src -I$(top_srcdir)/submodules/jansson/src
 
 if WANT_USBUTILS
-USBUTILS_CPPFLAGS = -I$(top_builddir)/submodules/libusb-1.0/libusb -I$(top_srcdir)/submodules/libusb-1.0/libusb
+USBUTILS_CPPFLAGS = -I$(top_builddir)/submodules/libusb-bk/libusb -I$(top_srcdir)/submodules/libusb-bk/libusb
 else
 USBUTILS_CPPFLAGS =
 endif
