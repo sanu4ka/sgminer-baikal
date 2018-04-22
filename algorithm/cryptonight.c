@@ -1,4 +1,3 @@
-
 #include <stddef.h>
 #include <string.h>
 #include <limits.h>
@@ -12,25 +11,6 @@
 
 #include "algorithm/cryptonight.h"
 #include "algorithm/cn-aes-tbls.h"
-
-#define VARIANT1_1(p) \
-  do if (Variant > 0) { \
-    const uint32_t tmp = (p); \
-    static const uint32_t table = 0x75310; \
-    const uint8_t index = ((tmp >> 26) & 12) | ((tmp >> 23) & 2); \
-    (p) ^= ((table >> index) & 0x30) << 24; \
-  } while(0)
-
-#define VARIANT1_2(p) \
-  do if (Variant > 0) { \
-    (p) ^= tweak1_2; \
-  } while(0)
-
-#define VARIANT1_INIT() \
-  if (Variant > 0 && Length < 43) { \
-    quit(1, "Cryptonight variants need at least 43 bytes of data"); \
-  } \
-  const uint64_t tweak1_2 = Variant > 0 ? *(uint64_t*)(Input + 35) ^ CNCtx.State[24] : 0
 
 static const uint64_t keccakf_rndc[24] = 
 {
@@ -126,22 +106,16 @@ static void CNKeccakF1600(uint64_t *st)
 	}
 }
 
-void CNKeccak(uint64_t *output, uint64_t *input, uint32_t Length)
+void CNKeccak(uint64_t *output, uint64_t *input)
 {
 	uint64_t st[25];
 	
 	// Copy 72 bytes
-	//for(int i = 0; i < 9; ++i) st[i] = input[i];
+	for(int i = 0; i < 9; ++i) st[i] = input[i];
 	
-	//st[9] = (input[9] & 0x00000000FFFFFFFFUL) | 0x0000000100000000UL;
+	st[9] = (input[9] & 0x00000000FFFFFFFFUL) | 0x0000000100000000UL;
 	
-	memcpy(st, input, Length);
-	
-	((uint8_t *)st)[Length] = 0x01;
-	
-	memset(((uint8_t *)st) + Length + 1, 0x00, 128 - Length - 1);
-	
-	for(int i = 16; i < 25; ++i) st[i] = 0x00UL;
+	for(int i = 10; i < 25; ++i) st[i] = 0x00UL;
 	
 	// Last bit of padding
 	st[16] = 0x8000000000000000UL;
@@ -151,14 +125,8 @@ void CNKeccak(uint64_t *output, uint64_t *input, uint32_t Length)
 	memcpy(output, st, 200);
 }
 
-#if !defined(_WIN64) && !defined(__amd64__)
-static inline uint64_t hi_dword(uint64_t val) {
-	return val >> 32;
-}
-
-static inline uint64_t lo_dword(uint64_t val) {
-	return val & 0xFFFFFFFF;
-}
+#define hi_dword(x) (x >> 32)
+#define lo_dword(x) (x & 0xFFFFFFFF)
 
 static inline uint64_t mul128(uint64_t multiplier, uint64_t multiplicand, uint64_t* product_hi) {
   // multiplier   = ab = a * 2^32 + b
@@ -184,7 +152,8 @@ static inline uint64_t mul128(uint64_t multiplier, uint64_t multiplicand, uint64
 
   return product_lo;
 }
-#else
+
+#if 0
 static inline uint64_t mul128(uint64_t a, uint64_t b, uint64_t* product_hi)
 {
 	uint64_t lo, hi;
@@ -197,7 +166,8 @@ static inline uint64_t mul128(uint64_t a, uint64_t b, uint64_t* product_hi)
 	
 	return lo;
 }
-#endif
+#endif 
+
 
 #define BYTE(x, y)		(((x) >> ((y) << 3)) & 0xFF)
 #define ROTL32(x, y)	(((x) << (y)) | ((x) >> (32 - (y))))
@@ -238,15 +208,13 @@ void AESExpandKey256(uint32_t *keybuf)
 	}
 }
 
-void cryptonight(uint8_t *Output, uint8_t *Input, uint32_t Length, int Variant)
+void cryptonight(uint8_t *Output, uint8_t *Input)
 {
 	CryptonightCtx CNCtx;
 	uint64_t text[16], a[2], b[2];
 	uint32_t ExpandedKey1[64], ExpandedKey2[64];
 	
-	CNKeccak(CNCtx.State, Input, Length);
-
-	VARIANT1_INIT();
+	CNKeccak(CNCtx.State, (uint64_t*)Input);
 	
 	for(int i = 0; i < 4; ++i) ((uint64_t *)ExpandedKey1)[i] = CNCtx.State[i];
 	for(int i = 0; i < 4; ++i) ((uint64_t *)ExpandedKey2)[i] = CNCtx.State[i + 4];
@@ -260,7 +228,7 @@ void cryptonight(uint8_t *Output, uint8_t *Input, uint32_t Length, int Variant)
 	{
 		for(int j = 0; j < 8; ++j)
 		{
-			CNAESTransform(text + (j << 1), ExpandedKey1);
+			CNAESTransform((uint32_t*)(text + (j << 1)), ExpandedKey1);
 		}
 		
 		memcpy(CNCtx.Scratchpad + (i << 4), text, 128);
@@ -276,12 +244,11 @@ void cryptonight(uint8_t *Output, uint8_t *Input, uint32_t Length, int Variant)
 		uint64_t c[2];
 		memcpy(c, CNCtx.Scratchpad + ((a[0] & 0x1FFFF0) >> 3), 16);
 		
-		CNAESRnd(c, a);
+		CNAESRnd((uint32_t*)c, (uint32_t*)a);
 		
 		b[0] ^= c[0];
 		b[1] ^= c[1];
 		
-		VARIANT1_1(b[1]);
 		memcpy(CNCtx.Scratchpad + ((a[0] & 0x1FFFF0) >> 3), b, 16);
 		
 		memcpy(b, CNCtx.Scratchpad + ((c[0] & 0x1FFFF0) >> 3), 16);
@@ -291,9 +258,7 @@ void cryptonight(uint8_t *Output, uint8_t *Input, uint32_t Length, int Variant)
 		a[1] += mul128(c[0], b[0], &hi);
 		a[0] += hi;
 		
-		VARIANT1_2(a[1]);
 		memcpy(CNCtx.Scratchpad + ((c[0] & 0x1FFFF0) >> 3), a, 16);
-		VARIANT1_2(a[1]);
 		
 		a[0] ^= b[0];
 		a[1] ^= b[1];
@@ -310,7 +275,7 @@ void cryptonight(uint8_t *Output, uint8_t *Input, uint32_t Length, int Variant)
 		
 		for(int j = 0; j < 8; ++j)
 		{
-			CNAESTransform(text + (j << 1), ExpandedKey2);
+			CNAESTransform((uint32_t*)(text + (j << 1)), (uint32_t*)ExpandedKey2);
 		}
 	}
 	
@@ -359,35 +324,18 @@ void cryptonight(uint8_t *Output, uint8_t *Input, uint32_t Length, int Variant)
 void cryptonight_regenhash(struct work *work)
 {
 	uint32_t data[20];
-	int variant = monero_variant(work);
+	uint32_t *nonce = (uint32_t *)(work->data + 39);
 	uint32_t *ohash = (uint32_t *)(work->hash);
 	
-	memcpy(data, work->data, work->XMRBlobLen);
-		
-	cryptonight(ohash, data, work->XMRBlobLen, variant);
-	
-	char *tmpdbg = bin2hex((uint8_t*) ohash, 32);
-	
-	applog(LOG_DEBUG, "cryptonight_regenhash_var%d: %s", variant, tmpdbg);
-	
-	free(tmpdbg);
-	
-	//memset(ohash, 0x00, 32);
-}
-
-
-void cryptonightlite_regenhash(struct work *work)
-{
-	uint32_t data[20];
-	uint32_t *ohash = (uint32_t *)(work->hash);
+	work->XMRNonce = *nonce;
 	
 	memcpy(data, work->data, 19 * 4);
 		
-	cryptonight((uint8_t*)ohash, (uint8_t*)data, 2, 0xFFFF0);
+	cryptonight((uint8_t*)ohash, (uint8_t*)data);
 	
 	char *tmpdbg = bin2hex((uint8_t*)ohash, 32);
 	
-	applog(LOG_DEBUG, "cryptonightlite_regenhash: %s\n", tmpdbg);
+	applog(LOG_DEBUG, "cryptonight_regenhash: %s\n", tmpdbg);
 	
 	free(tmpdbg);
 	
