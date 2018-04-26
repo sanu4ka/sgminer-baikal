@@ -37,6 +37,7 @@
 # include <ws2tcpip.h>
 # include <mmsystem.h>
 #endif
+#include <sched.h>
 
 #include "miner.h"
 #include "elist.h"
@@ -45,7 +46,17 @@
 
 #define DEFAULT_SOCKWAIT 60
 
+extern double opt_diff_mult;
+
 bool successful_connect = false;
+
+int no_yield(void)
+{
+	return 0;
+}
+
+int (*selective_yield)(void) = &no_yield;
+
 static void keep_sockalive(SOCKETTYPE fd)
 {
 	const int tcp_one = 1;
@@ -66,7 +77,8 @@ static void keep_sockalive(SOCKETTYPE fd)
 #ifndef __linux
 		setsockopt(fd, IPPROTO_TCP, TCP_NODELAY, (const void *)&tcp_one, sizeof(tcp_one));
 #else /* __linux */
-		setsockopt(fd, SOL_TCP, TCP_NODELAY, (const void *)&tcp_one, sizeof(tcp_one));
+	fcntl(fd, F_SETFD, FD_CLOEXEC);
+	setsockopt(fd, SOL_TCP, TCP_NODELAY, (const void *)&tcp_one, sizeof(tcp_one));
 	setsockopt(fd, SOL_TCP, TCP_KEEPCNT, &tcp_one, sizeof(tcp_one));
 	setsockopt(fd, SOL_TCP, TCP_KEEPIDLE, &tcp_keepidle, sizeof(tcp_keepidle));
 	setsockopt(fd, SOL_TCP, TCP_KEEPINTVL, &tcp_keepintvl, sizeof(tcp_keepintvl));
@@ -76,6 +88,211 @@ static void keep_sockalive(SOCKETTYPE fd)
 	setsockopt(fd, IPPROTO_TCP, TCP_KEEPALIVE, &tcp_keepintvl, sizeof(tcp_keepintvl));
 #endif /* __APPLE_CC__ */
 
+}
+
+#ifdef WIN32
+/* Generic versions of inet_pton for windows, using different names in case
+ * it is implemented in ming in the future. */
+#define W32NS_INADDRSZ  4
+#define W32NS_IN6ADDRSZ 16
+#define W32NS_INT16SZ   2
+
+static int Inet_Pton4(const char *src, char *dst)
+{
+	uint8_t tmp[W32NS_INADDRSZ], *tp;
+
+	int saw_digit = 0;
+	int octets = 0;
+	*(tp = tmp) = 0;
+
+	int ch;
+	while ((ch = *src++) != '\0')
+	{
+		if (ch >= '0' && ch <= '9')
+		{
+			uint32_t n = *tp * 10 + (ch - '0');
+
+			if (saw_digit && *tp == 0)
+				return 0;
+
+			if (n > 255)
+				return 0;
+
+			*tp = n;
+			if (!saw_digit)
+			{
+				if (++octets > 4)
+					return 0;
+				saw_digit = 1;
+			}
+		}
+		else if (ch == '.' && saw_digit)
+		{
+			if (octets == 4)
+				return 0;
+			*++tp = 0;
+			saw_digit = 0;
+		}
+		else
+			return 0;
+	}
+	if (octets < 4)
+		return 0;
+
+	cg_memcpy(dst, tmp, W32NS_INADDRSZ);
+
+	return 1;
+}
+
+static int Inet_Pton6(const char *src, char *dst)
+{
+	static const char xdigits[] = "0123456789abcdef";
+	uint8_t tmp[W32NS_IN6ADDRSZ];
+
+	uint8_t *tp = (uint8_t*) memset(tmp, '\0', W32NS_IN6ADDRSZ);
+	uint8_t *endp = tp + W32NS_IN6ADDRSZ;
+	uint8_t *colonp = NULL;
+
+	/* Leading :: requires some special handling. */
+	if (*src == ':')
+	{
+		if (*++src != ':')
+			return 0;
+	}
+
+	const char *curtok = src;
+	int saw_xdigit = 0;
+	uint32_t val = 0;
+	int ch;
+	while ((ch = tolower(*src++)) != '\0')
+	{
+		const char *pch = strchr(xdigits, ch);
+		if (pch != NULL)
+		{
+			val <<= 4;
+			val |= (pch - xdigits);
+			if (val > 0xffff)
+				return 0;
+			saw_xdigit = 1;
+			continue;
+		}
+		if (ch == ':')
+		{
+			curtok = src;
+			if (!saw_xdigit)
+			{
+				if (colonp)
+					return 0;
+				colonp = tp;
+				continue;
+			}
+			else if (*src == '\0')
+			{
+				return 0;
+			}
+			if (tp + W32NS_INT16SZ > endp)
+				return 0;
+			*tp++ = (uint8_t) (val >> 8) & 0xff;
+			*tp++ = (uint8_t) val & 0xff;
+			saw_xdigit = 0;
+			val = 0;
+			continue;
+		}
+		if (ch == '.' && ((tp + W32NS_INADDRSZ) <= endp) &&
+			Inet_Pton4(curtok, (char*) tp) > 0)
+		{
+			tp += W32NS_INADDRSZ;
+			saw_xdigit = 0;
+			break; /* '\0' was seen by inet_pton4(). */
+		}
+		return 0;
+	}
+	if (saw_xdigit)
+	{
+		if (tp + W32NS_INT16SZ > endp)
+			return 0;
+		*tp++ = (uint8_t) (val >> 8) & 0xff;
+		*tp++ = (uint8_t) val & 0xff;
+	}
+	if (colonp != NULL)
+	{
+		int i;
+		/*
+			* Since some memmove()'s erroneously fail to handle
+			* overlapping regions, we'll do the shift by hand.
+			*/
+		const int n = tp - colonp;
+
+		if (tp == endp)
+			return 0;
+
+		for (i = 1; i <= n; i++)
+		{
+			endp[-i] = colonp[n - i];
+			colonp[n - i] = 0;
+		}
+		tp = endp;
+	}
+	if (tp != endp)
+		return 0;
+
+	cg_memcpy(dst, tmp, W32NS_IN6ADDRSZ);
+
+	return 1;
+}
+
+int Inet_Pton(int af, const char *src, void *dst)
+{
+	switch (af)
+	{
+		case AF_INET:
+			return Inet_Pton4(src, dst);
+		case AF_INET6:
+			return Inet_Pton6(src, dst);
+		default:
+			return -1;
+	}
+}
+#endif
+
+/* Align a size_t to 4 byte boundaries for fussy arches */
+static inline void align_len(size_t *len)
+{
+	if (*len % 4)
+		*len += 4 - (*len % 4);
+}
+
+void *_cgmalloc(size_t size, const char *file, const char *func, const int line)
+{
+	void *ret;
+
+	align_len(&size);
+	ret = malloc(size);
+	if (unlikely(!ret))
+		quit(1, "Failed to malloc size %d from %s %s:%d", (int)size, file, func, line);
+	return ret;
+}
+
+void *_cgcalloc(const size_t memb, size_t size, const char *file, const char *func, const int line)
+{
+	void *ret;
+
+	align_len(&size);
+	ret = calloc(memb, size);
+	if (unlikely(!ret))
+		quit(1, "Failed to calloc memb %d size %d from %s %s:%d", (int)memb, (int)size, file, func, line);
+	return ret;
+}
+
+void *_cgrealloc(void *ptr, size_t size, const char *file, const char *func, const int line)
+{
+	void *ret;
+
+	align_len(&size);
+	ret = realloc(ptr, size);
+	if (unlikely(!ret))
+		quit(1, "Failed to realloc size %d from %s %s:%d", (int)size, file, func, line);
+	return ret;
 }
 
 struct tq_ent {
@@ -128,14 +345,11 @@ static size_t all_data_cb(const void *ptr, size_t size, size_t nmemb,
 	oldlen = db->len;
 	newlen = oldlen + len;
 
-	newmem = realloc(db->buf, newlen + 1);
-	if (!newmem)
-		return 0;
-
+	newmem = cgrealloc(db->buf, newlen + 1);
 	db->buf = newmem;
 	db->len = newlen;
-	memcpy(db->buf + oldlen, ptr, len);
-	memcpy(db->buf + newlen, &zero, 1);	/* null terminate */
+	cg_memcpy(db->buf + oldlen, ptr, len);
+	cg_memcpy(db->buf + newlen, &zero, 1);	/* null terminate */
 
 	return len;
 }
@@ -150,7 +364,7 @@ static size_t upload_data_cb(void *ptr, size_t size, size_t nmemb,
 		len = ub->len;
 
 	if (len) {
-		memcpy(ptr, ub->buf, len);
+		cg_memcpy(ptr, ub->buf, len);
 		ub->buf += len;
 		ub->len -= len;
 	}
@@ -165,10 +379,8 @@ static size_t resp_hdr_cb(void *ptr, size_t size, size_t nmemb, void *user_data)
 	char *rem, *val = NULL, *key = NULL;
 	void *tmp;
 
-	val = calloc(1, ptrlen);
-	key = calloc(1, ptrlen);
-	if (!key || !val)
-		goto out;
+	val = cgcalloc(1, ptrlen);
+	key = cgcalloc(1, ptrlen);
 
 	tmp = memchr(ptr, ':', ptrlen);
 	if (!tmp || (tmp == ptr))	/* skip empty keys / blanks */
@@ -176,7 +388,7 @@ static size_t resp_hdr_cb(void *ptr, size_t size, size_t nmemb, void *user_data)
 	slen = tmp - ptr;
 	if ((slen + 1) == ptrlen)	/* skip key w/ no value */
 		goto out;
-	memcpy(key, ptr, slen);		/* store & nul term key */
+	cg_memcpy(key, ptr, slen);		/* store & nul term key */
 	key[slen] = 0;
 
 	rem = ptr + slen + 1;		/* trim value's leading whitespace */
@@ -186,7 +398,7 @@ static size_t resp_hdr_cb(void *ptr, size_t size, size_t nmemb, void *user_data)
 		rem++;
 	}
 
-	memcpy(val, rem, remlen);	/* store value, trim trailing ws */
+	cg_memcpy(val, rem, remlen);	/* store value, trim trailing ws */
 	val[remlen] = 0;
 	while ((*val) && (isspace(val[strlen(val) - 1])))
 		val[strlen(val) - 1] = 0;
@@ -210,7 +422,7 @@ static size_t resp_hdr_cb(void *ptr, size_t size, size_t nmemb, void *user_data)
 				sscanf(val + 7, "%d", &hi->rolltime);
 				hi->hadexpire = true;
 			} else
-				hi->rolltime = opt_scantime;
+				hi->rolltime = max_scantime;
 			applog(LOG_DEBUG, "X-Roll-Ntime expiry set to %d", hi->rolltime);
 		}
 	}
@@ -346,6 +558,133 @@ json_t *json_web_config(const char *url)
 
 c_out:
 	return val;
+}
+
+
+json_t *json_get(CURL *curl, const char *url,
+		      const char *userpass, const char *rpc_req)
+{
+	long timeout = 60;
+	struct data_buffer all_data = {NULL, 0};
+	struct header_info hi = {NULL, 0, NULL, NULL, false, false, false};
+	char len_hdr[64], user_agent_hdr[128];
+	char curl_err_str[CURL_ERROR_SIZE];
+	struct curl_slist *headers = NULL;
+	struct upload_buffer upload_data;
+	json_t *val, *err_val, *res_val;
+
+	double byte_count;
+	json_error_t err;
+	int rc;
+
+	memset(&err, 0, sizeof(err));
+
+	/* it is assumed that 'curl' is freshly [re]initialized at this pt */
+	curl_easy_setopt(curl, CURLOPT_TIMEOUT, timeout);
+
+	// CURLOPT_VERBOSE won't write to stderr if we use CURLOPT_DEBUGFUNCTION
+	curl_easy_setopt(curl, CURLOPT_VERBOSE, 0);
+
+	curl_easy_setopt(curl, CURLOPT_NOSIGNAL, 1);
+	curl_easy_setopt(curl, CURLOPT_URL, url);
+	curl_easy_setopt(curl, CURLOPT_ENCODING, "");
+	curl_easy_setopt(curl, CURLOPT_FAILONERROR, 1);
+
+	/* Shares are staggered already and delays in submission can be costly
+	 * so do not delay them */
+	curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, all_data_cb);
+	curl_easy_setopt(curl, CURLOPT_WRITEDATA, &all_data);
+	curl_easy_setopt(curl, CURLOPT_READFUNCTION, upload_data_cb);
+	curl_easy_setopt(curl, CURLOPT_READDATA, &upload_data);
+	curl_easy_setopt(curl, CURLOPT_ERRORBUFFER, curl_err_str);
+	curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 1);
+	curl_easy_setopt(curl, CURLOPT_HEADERFUNCTION, resp_hdr_cb);
+	curl_easy_setopt(curl, CURLOPT_HEADERDATA, &hi);
+	curl_easy_setopt(curl, CURLOPT_USE_SSL, false);
+    curl_easy_setopt(curl, CURLOPT_SSL_VERIFYPEER, false);
+
+	curl_easy_setopt(curl, CURLOPT_POST, 1);
+
+	upload_data.buf = rpc_req;
+	upload_data.len = strlen(rpc_req);
+	sprintf(len_hdr, "Content-Length: %lu",
+		(unsigned long) upload_data.len);
+	sprintf(user_agent_hdr, "User-Agent: %s", PACKAGE_STRING);
+
+	headers = curl_slist_append(headers,
+		"Content-type: application/json");
+
+	headers = curl_slist_append(headers, len_hdr);
+	headers = curl_slist_append(headers, user_agent_hdr);	
+
+	curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
+
+	rc = curl_easy_perform(curl);
+	if (rc) {
+		applog(LOG_INFO, "HTTP request failed: %s", curl_err_str);
+		goto err_out;
+	}
+
+	if (!all_data.buf) {
+		applog(LOG_DEBUG, "Empty data received in json_rpc_call.");
+		goto err_out;
+	}
+
+    if (hi.lp_path) {
+        free(hi.lp_path);
+        hi.lp_path = NULL;
+    }
+    if (hi.stratum_url) {
+        free(hi.stratum_url);
+        hi.stratum_url = NULL;
+    }
+
+	val = JSON_LOADS(all_data.buf, &err);
+	if (!val) {
+		applog(LOG_INFO, "JSON decode failed(%d): %s", err.line, err.text);
+		goto err_out;
+	}
+
+	/* JSON-RPC valid response returns a non-null 'result',
+	 * and a null 'error'.
+	 */
+	res_val = json_object_get(val, "result");
+	err_val = json_object_get(val, "error");
+
+	if (!res_val ||(err_val && !json_is_null(err_val))) {
+		char *s;
+
+		if (err_val)
+			s = json_dumps(err_val, JSON_INDENT(3));
+		else
+			s = strdup("(unknown reason)");
+
+		applog(LOG_INFO, "JSON-RPC call failed: %s", s);
+
+		free(s);
+
+		goto err_out;
+	}
+
+	if (hi.reason) {
+		json_object_set_new(val, "reject-reason", json_string(hi.reason));
+		free(hi.reason);
+		hi.reason = NULL;
+	}
+	successful_connect = true;
+	databuf_free(&all_data);
+	curl_slist_free_all(headers);
+	curl_easy_reset(curl);
+	return val;
+
+err_out:
+	databuf_free(&all_data);
+	curl_slist_free_all(headers);
+	curl_easy_reset(curl);
+	if (!successful_connect)
+		applog(LOG_DEBUG, "Failed to connect in json_rpc_call");
+	curl_easy_setopt(curl, CURLOPT_FRESH_CONNECT, 1);
+	return NULL;
 }
 
 json_t *json_rpc_call(CURL *curl, const char *url,
@@ -622,10 +961,7 @@ char *get_proxy(char *url, struct pool *pool)
 
 			*split = '\0';
 			len = split - url;
-			pool->rpc_proxy = malloc(1 + len - plen);
-			if (!(pool->rpc_proxy))
-				quithere(1, "Failed to malloc rpc_proxy");
-
+			pool->rpc_proxy = cgmalloc(1 + len - plen);
 			strcpy(pool->rpc_proxy, url + plen);
 			extract_sockaddr(pool->rpc_proxy, &pool->sockaddr_proxy_url, &pool->sockaddr_proxy_port);
 			pool->rpc_proxytype = proxynames[i].proxytype;
@@ -660,10 +996,7 @@ char *bin2hex(const unsigned char *p, size_t len)
 	slen = len * 2 + 1;
 	if (slen % 4)
 		slen += 4 - (slen % 4);
-	s = calloc(slen, 1);
-	if (unlikely(!s))
-		quithere(1, "Failed to calloc");
-
+	s = cgcalloc(slen, 1);
 	__bin2hex(s, p, len);
 
 	return s;
@@ -818,7 +1151,7 @@ void address_to_pubkeyhash(unsigned char *pkh, const char *addr)
 	pkh[0] = 0x76;
 	pkh[1] = 0xa9;
 	pkh[2] = 0x14;
-	memcpy(&pkh[3], &b58bin[1], 20);
+	cg_memcpy(&pkh[3], &b58bin[1], 20);
 	pkh[23] = 0x88;
 	pkh[24] = 0xac;
 }
@@ -848,19 +1181,17 @@ unsigned char *ser_string(char *s, int *slen)
 	size_t len = strlen(s);
 	unsigned char *ret;
 
-	ret = malloc(1 + len + 8); // Leave room for largest size
-	if (unlikely(!ret))
-		quit(1, "Failed to malloc ret in ser_string");
+	ret = cgmalloc(1 + len + 8); // Leave room for largest size
 	if (len < 253) {
 		ret[0] = len;
-		memcpy(ret + 1, s, len);
+		cg_memcpy(ret + 1, s, len);
 		*slen = len + 1;
 	} else if (len < 0x10000) {
 		uint16_t *u16 = (uint16_t *)&ret[1];
 
 		ret[0] = 253;
 		*u16 = htobe16(len);
-		memcpy(ret + 3, s, len);
+		cg_memcpy(ret + 3, s, len);
 		*slen = len + 3;
 	} else {
 		/* size_t is only 32 bit on many platforms anyway */
@@ -868,7 +1199,7 @@ unsigned char *ser_string(char *s, int *slen)
 
 		ret[0] = 254;
 		*u32 = htobe32(len);
-		memcpy(ret + 5, s, len);
+		cg_memcpy(ret + 5, s, len);
 		*slen = len + 5;
 	}
 	return ret;
@@ -921,10 +1252,7 @@ struct thread_q *tq_new(void)
 {
 	struct thread_q *tq;
 
-	tq = calloc(1, sizeof(*tq));
-	if (!tq)
-		return NULL;
-
+	tq = cgcalloc(1, sizeof(*tq));
 	INIT_LIST_HEAD(&tq->q);
 	pthread_mutex_init(&tq->mutex, NULL);
 	pthread_cond_init(&tq->cond, NULL);
@@ -974,10 +1302,7 @@ bool tq_push(struct thread_q *tq, void *data)
 	struct tq_ent *ent;
 	bool rc = true;
 
-	ent = calloc(1, sizeof(*ent));
-	if (!ent)
-		return false;
-
+	ent = cgcalloc(1, sizeof(*ent));
 	ent->data = data;
 	INIT_LIST_HEAD(&ent->q_node);
 
@@ -1065,7 +1390,7 @@ bool time_less(struct timeval *a, struct timeval *b)
 
 void copy_time(struct timeval *dest, const struct timeval *src)
 {
-	memcpy(dest, src, sizeof(struct timeval));
+	cg_memcpy(dest, src, sizeof(struct timeval));
 }
 
 void timespec_to_val(struct timeval *val, const struct timespec *spec)
@@ -1112,14 +1437,23 @@ void ms_to_timeval(struct timeval *val, int64_t ms)
 	val->tv_usec = tvdiv.rem * 1000;
 }
 
+static void spec_nscheck(struct timespec *ts)
+{
+	while (ts->tv_nsec >= 1000000000) {
+		ts->tv_nsec -= 1000000000;
+		ts->tv_sec++;
+	}
+	while (ts->tv_nsec < 0) {
+		ts->tv_nsec += 1000000000;
+		ts->tv_sec--;
+	}
+}
+
 void timeraddspec(struct timespec *a, const struct timespec *b)
 {
 	a->tv_sec += b->tv_sec;
 	a->tv_nsec += b->tv_nsec;
-	if (a->tv_nsec >= 1000000000) {
-		a->tv_nsec -= 1000000000;
-		a->tv_sec++;
-	}
+	spec_nscheck(a);
 }
 
 static int __maybe_unused timespec_to_ms(struct timespec *ts)
@@ -1132,17 +1466,58 @@ static void __maybe_unused timersubspec(struct timespec *a, const struct timespe
 {
 	a->tv_sec -= b->tv_sec;
 	a->tv_nsec -= b->tv_nsec;
-	if (a->tv_nsec < 0) {
-		a->tv_nsec += 1000000000;
-		a->tv_sec--;
-	}
+	spec_nscheck(a);
 }
 
-/* These are sgminer specific sleep functions that use an absolute nanosecond
- * resolution timer to avoid poor usleep accuracy and overruns. */
+char *Strcasestr(char *haystack, const char *needle)
+{
+	char *lowhay, *lowneedle, *ret;
+	int hlen, nlen, i, ofs;
+
+	if (unlikely(!haystack || !needle))
+		return NULL;
+	hlen = strlen(haystack);
+	nlen = strlen(needle);
+	if (!hlen || !nlen)
+		return NULL;
+	lowhay = alloca(hlen);
+	lowneedle = alloca(nlen);
+	for (i = 0; i < hlen; i++)
+		lowhay[i] = tolower(haystack[i]);
+	for (i = 0; i < nlen; i++)
+		lowneedle[i] = tolower(needle[i]);
+	ret = strstr(lowhay, lowneedle);
+	if (!ret)
+		return ret;
+	ofs = ret - lowhay;
+	return haystack + ofs;
+}
+
+char *Strsep(char **stringp, const char *delim)
+{
+	char *ret = *stringp;
+	char *p;
+
+	p = (ret != NULL) ? strpbrk(ret, delim) : NULL;
+
+	if (p == NULL)
+		*stringp = NULL;
+	else {
+		*p = '\0';
+		*stringp = p + 1;
+	}
+
+	return ret;
+}
+
 #ifdef WIN32
+/* Mingw32 has no strsep so create our own custom one  */
+
 /* Windows start time is since 1601 LOL so convert it to unix epoch 1970. */
 #define EPOCHFILETIME (116444736000000000LL)
+
+/* These are cgminer specific sleep functions that use an absolute nanosecond
+ * resolution timer to avoid poor usleep accuracy and overruns. */
 
 /* Return the system time as an lldiv_t in decimicroseconds. */
 static void decius_time(lldiv_t *lidiv)
@@ -1159,7 +1534,7 @@ static void decius_time(lldiv_t *lidiv)
 	*lidiv = lldiv(li.QuadPart, 10000000);
 }
 
-/* This is a sgminer gettimeofday wrapper. Since we always call gettimeofday
+/* This is a cgminer gettimeofday wrapper. Since we always call gettimeofday
  * with tz set to NULL, and windows' default resolution is only 15ms, this
  * gives us higher resolution times on windows. */
 void cgtime(struct timeval *tv)
@@ -1194,7 +1569,8 @@ void cgtimer_sub(cgtimer_t *a, cgtimer_t *b, cgtimer_t *res)
 }
 #endif /* WIN32 */
 
-#ifdef CLOCK_MONOTONIC /* Essentially just linux */
+#if defined(CLOCK_MONOTONIC) && !defined(__FreeBSD__) /* Essentially just linux */
+//#ifdef CLOCK_MONOTONIC /* Essentially just linux */
 void cgtimer_time(cgtimer_t *ts_start)
 {
 	clock_gettime(CLOCK_MONOTONIC, ts_start);
@@ -1250,8 +1626,8 @@ void cgtimer_time(cgtimer_t *ts_start)
 	struct timeval tv;
 
 	cgtime(&tv);
-	ts_start->tv_sec = tv->tv_sec;
-	ts_start->tv_nsec = tv->tv_usec * 1000;
+	ts_start->tv_sec = tv.tv_sec;
+	ts_start->tv_nsec = tv.tv_usec * 1000;
 }
 #endif /* __MACH__ */
 
@@ -1426,14 +1802,20 @@ bool extract_sockaddr(char *url, char **sockaddr_url, char **sockaddr_port)
 
 	if (url_len < 1)
 		return false;
-
+	
+	/* Get rid of the [] */
+	if (ipv6_begin && ipv6_end && ipv6_end > ipv6_begin) {
+		url_len -= 2;
+		url_begin++;
+	}
+	
 	snprintf(url_address, 254, "%.*s", url_len, url_begin);
 
 	if (port_len) {
 		char *slash;
 
 		snprintf(port, 6, "%.*s", port_len, port_start);
-        slash = strpbrk(port, "/#");
+		slash = strpbrk(port, "/#");
 		if (slash)
 			*slash = '\0';
 	} else
@@ -1444,8 +1826,6 @@ bool extract_sockaddr(char *url, char **sockaddr_url, char **sockaddr_port)
 
 	return true;
 }
-
-
 
 enum send_ret {
 	SEND_OK,
@@ -1461,7 +1841,7 @@ static enum send_ret __stratum_send(struct pool *pool, char *s, ssize_t len)
 	SOCKETTYPE sock = pool->sock;
 	ssize_t ssent = 0;
 
-    if (opt_protocol)
+	if (opt_protocol)
 		applog(LOG_DEBUG, "SEND: %s", s);
 
 	strcat(s, "\n");
@@ -1558,7 +1938,8 @@ bool sock_full(struct pool *pool)
 
 static void clear_sockbuf(struct pool *pool)
 {
-	strcpy(pool->sockbuf, "");
+	if (likely(pool->sockbuf))
+		strcpy(pool->sockbuf, "");
 }
 
 static void clear_sock(struct pool *pool)
@@ -1578,13 +1959,11 @@ static void clear_sock(struct pool *pool)
 }
 
 /* Realloc memory to new size and zero any extra memory added */
-void _recalloc(void **ptr, size_t old, size_t new, const char *file, const char *func, const int line)
+void _cgrecalloc(void **ptr, size_t old, size_t new, const char *file, const char *func, const int line)
 {
 	if (new == old)
 		return;
-	*ptr = realloc(*ptr, new);
-	if (unlikely(!*ptr))
-		quitfrom(1, file, func, line, "Failed to realloc");
+	*ptr = _cgrealloc(*ptr, new, file, func, line);
 	if (new > old)
 		memset(*ptr + old, 0, new - old);
 }
@@ -1603,9 +1982,7 @@ static void recalloc_sock(struct pool *pool, size_t len)
 	new = new + (RBUFSIZE - (new % RBUFSIZE));
 	// Avoid potentially recursive locking
 	// applog(LOG_DEBUG, "Recallocing pool sockbuf to %d", new);
-	pool->sockbuf = realloc(pool->sockbuf, new);
-	if (!pool->sockbuf)
-		quithere(1, "Failed to realloc pool sockbuf");
+	pool->sockbuf = cgrealloc(pool->sockbuf, new);
 	memset(pool->sockbuf + old, 0, new - old);
 	pool->sockbuf_size = new;
 }
@@ -1712,39 +2089,7 @@ static char *json_array_string(json_t *val, unsigned int entry)
 	return NULL;
 }
 
-static bool parse_extranonce(struct pool *pool, json_t *val)
-{
-	char s[RBUFSIZE], *nonce1;
-	int n2size;
 
-	nonce1 = json_array_string(val, 0);
-	if (!valid_hex(nonce1)) {
-		applog(LOG_INFO, "Failed to get valid nonce1 in parse_extranonce");
-		return false;
-	}
-	n2size = json_integer_value(json_array_get(val, 1));
-	if (!n2size) {
-		applog(LOG_INFO, "Failed to get valid n2size in parse_extranonce");
-		free(nonce1);
-		return false;
-	}
-
-	cg_wlock(&pool->data_lock);
-	free(pool->nonce1);
-	pool->nonce1 = nonce1;
-	pool->n1_len = strlen(nonce1) / 2;
-	free(pool->nonce1bin);
-	pool->nonce1bin = (unsigned char *)calloc(pool->n1_len, 1);
-	if (unlikely(!pool->nonce1bin))
-		quithere(1, "Failed to calloc pool->nonce1bin");
-	hex2bin(pool->nonce1bin, pool->nonce1, pool->n1_len);
-	pool->n2size = n2size;
-	cg_wunlock(&pool->data_lock);
-
-	applog(LOG_NOTICE, "Pool %d extranonce change requested", pool->pool_no);
-
-	return true;
-}
 
 static char *blank_merkle = "0000000000000000000000000000000000000000000000000000000000000000";
 
@@ -1803,14 +2148,12 @@ static bool parse_notify(struct pool *pool, json_t *val)
 	for (i = 0; i < pool->merkles; i++)
 		free(pool->swork.merkle_bin[i]);
 	if (merkles) {
-		pool->swork.merkle_bin = realloc(pool->swork.merkle_bin,
-						 sizeof(char *) * merkles + 1);
+		pool->swork.merkle_bin = cgrealloc(pool->swork.merkle_bin,
+						   sizeof(char *) * merkles + 1);
 		for (i = 0; i < merkles; i++) {
 			char *merkle = json_array_string(arr, i);
 
-			pool->swork.merkle_bin[i] = malloc(32);
-			if (unlikely(!pool->swork.merkle_bin[i]))
-				quit(1, "Failed to malloc pool swork merkle_bin");
+			pool->swork.merkle_bin[i] = cgmalloc(32);
 			if (opt_protocol)
 				applog(LOG_DEBUG, "merkle %d: %s", i, merkle);
 			ret = hex2bin(pool->swork.merkle_bin[i], merkle, 32);
@@ -1822,6 +2165,8 @@ static bool parse_notify(struct pool *pool, json_t *val)
 		}
 	}
 	pool->merkles = merkles;
+	if (pool->merkles < 2)
+		pool->bad_work++;
 	if (clean)
 		pool->nonce2 = 0;
 #if 0
@@ -1861,13 +2206,11 @@ static bool parse_notify(struct pool *pool, json_t *val)
 		goto out_unlock;
 	}
 	free(pool->coinbase);
-	align_len(&alloc_len);
-	pool->coinbase = calloc(alloc_len, 1);
-	if (unlikely(!pool->coinbase))
-		quit(1, "Failed to calloc pool coinbase in parse_notify");
-	memcpy(pool->coinbase, cb1, cb1_len);
-	memcpy(pool->coinbase + cb1_len, pool->nonce1bin, pool->n1_len);
-	memcpy(pool->coinbase + cb1_len + pool->n1_len + pool->n2size, cb2, cb2_len);
+	pool->coinbase = cgcalloc(alloc_len, 1);
+	cg_memcpy(pool->coinbase, cb1, cb1_len);
+	if (pool->n1_len)
+		cg_memcpy(pool->coinbase + cb1_len, pool->nonce1bin, pool->n1_len);
+	cg_memcpy(pool->coinbase + cb1_len + pool->n1_len + pool->n2size, cb2, cb2_len);
 	if (opt_debug) {
 		char *cb = bin2hex(pool->coinbase, pool->coinbase_len);
 
@@ -1903,19 +2246,22 @@ static bool parse_diff(struct pool *pool, json_t *val)
 {
 	double old_diff, diff;
 
-	diff = json_number_value(json_array_get(val, 0));
+    if (opt_diff_mult == 0.0)
+        diff = json_number_value(json_array_get(val, 0));
+    else
+        diff = json_number_value(json_array_get(val, 0)) * opt_diff_mult;
+	
 	if (diff == 0)
 		return false;
 
 	cg_wlock(&pool->data_lock);
-    if (pool->next_diff > 0) {
+	if (pool->next_diff > 0) {
 		old_diff = pool->next_diff;
 		pool->next_diff = diff;
 	} else {
 		old_diff = pool->sdiff;
 		pool->next_diff = pool->sdiff = diff;
 	}
-
 	cg_wunlock(&pool->data_lock);
 
 	if (old_diff != diff) {
@@ -1925,11 +2271,45 @@ static bool parse_diff(struct pool *pool, json_t *val)
 			applog(LOG_NOTICE, "Pool %d difficulty changed to %d",
 			       pool->pool_no, idiff);
 		else
-			applog(LOG_NOTICE, "Pool %d difficulty changed to %.3f",
+			applog(LOG_NOTICE, "Pool %d difficulty changed to %.1f",
 			       pool->pool_no, diff);
 	} else
-		applog(LOG_DEBUG, "Pool %d difficulty set to %.3f", pool->pool_no,
+		applog(LOG_DEBUG, "Pool %d difficulty set to %f", pool->pool_no,
 		       diff);
+
+	return true;
+}
+
+static bool parse_extranonce(struct pool *pool, json_t *val)
+{
+	char s[RBUFSIZE], *nonce1;
+	int n2size;
+
+	nonce1 = json_array_string(val, 0);
+	if (!valid_hex(nonce1)) {
+		applog(LOG_INFO, "Failed to get valid nonce1 in parse_extranonce");
+		return false;
+	}
+	n2size = json_integer_value(json_array_get(val, 1));
+	if (!n2size) {
+		applog(LOG_INFO, "Failed to get valid n2size in parse_extranonce");
+		free(nonce1);
+		return false;
+	}
+
+	cg_wlock(&pool->data_lock);
+	free(pool->nonce1);
+	pool->nonce1 = nonce1;
+	pool->n1_len = strlen(nonce1) / 2;
+	free(pool->nonce1bin);
+	pool->nonce1bin = (unsigned char *)calloc(pool->n1_len, 1);
+	if (unlikely(!pool->nonce1bin))
+		quithere(1, "Failed to calloc pool->nonce1bin");
+	hex2bin(pool->nonce1bin, pool->nonce1, pool->n1_len);
+	pool->n2size = n2size;
+	cg_wunlock(&pool->data_lock);
+
+	applog(LOG_NOTICE, "Pool %d extranonce change requested", pool->pool_no);
 
 	return true;
 }
@@ -1947,6 +2327,7 @@ static bool parse_reconnect(struct pool *pool, json_t *val)
 {
 	char *sockaddr_url, *stratum_port, *tmp;
 	char *url, *port, address[256];
+	int port_no;
 
 	memset(address, 0, 255);
 	url = (char *)json_string_value(json_array_get(val, 0));
@@ -1973,9 +2354,15 @@ static bool parse_reconnect(struct pool *pool, json_t *val)
 		}
 	}
 
-	port = (char *)json_string_value(json_array_get(val, 1));
-	if (!port)
-		port = pool->stratum_port;
+	port_no = json_integer_value(json_array_get(val, 1));
+	if (port_no) {
+		port = alloca(256);
+		sprintf(port, "%d", port_no);
+	} else {
+		port = (char *)json_string_value(json_array_get(val, 1));
+		if (!port)
+			port = pool->stratum_port;
+	}
 
 	snprintf(address, 254, "%s:%s", url, port);
 
@@ -2002,13 +2389,32 @@ static bool parse_reconnect(struct pool *pool, json_t *val)
 
 static bool send_version(struct pool *pool, json_t *val)
 {
+	json_t *id_val = json_object_get(val, "id");
 	char s[RBUFSIZE];
-	int id = json_integer_value(json_object_get(val, "id"));
-	
-	if (!id)
+	int id;
+
+	if (!id_val)
 		return false;
+	id = json_integer_value(json_object_get(val, "id"));
 
 	sprintf(s, "{\"id\": %d, \"result\": \""PACKAGE"/"VERSION"\", \"error\": null}", id);
+	if (!stratum_send(pool, s, strlen(s)))
+		return false;
+
+	return true;
+}
+
+static bool send_pong(struct pool *pool, json_t *val)
+{
+	json_t *id_val = json_object_get(val, "id");
+	char s[RBUFSIZE];
+	int id;
+
+	if (!id_val)
+		return false;
+	id = json_integer_value(json_object_get(val, "id"));
+
+	sprintf(s, "{\"id\": %d, \"result\": \"pong\", \"error\": null}", id);
 	if (!stratum_send(pool, s, strlen(s)))
 		return false;
 
@@ -2097,6 +2503,12 @@ bool parse_method(struct pool *pool, char *s)
 
 	if (!strncasecmp(buf, "client.show_message", 19)) {
 		ret = show_message(pool, params);
+		goto out_decref;
+	}
+
+	if (!strncasecmp(buf, "mining.ping", 11)) {
+		applog(LOG_INFO, "Pool %d ping", pool->pool_no);
+		ret = send_pong(pool, val);
 		goto out_decref;
 	}
 out_decref:
@@ -2226,6 +2638,11 @@ bool auth_stratum(struct pool *pool)
 	pool->probed = true;
 	successful_connect = true;
 
+	if (opt_suggest_diff) {
+		sprintf(s, "{\"id\": %d, \"method\": \"mining.suggest_difficulty\", \"params\": [%d]}",
+			swork_id++, opt_suggest_diff);
+		stratum_send(pool, s, strlen(s));
+	}
 out:
 	json_decref(val);
 	return ret;
@@ -2325,7 +2742,7 @@ static bool socks5_negotiate(struct pool *pool, int sockd)
 		len = 255;
 	uclen = len;
 	buf[4] = (uclen & 0xff);
-	memcpy(buf + 5, pool->sockaddr_url, len);
+	cg_memcpy(buf + 5, pool->sockaddr_url, len);
 	port = atoi(pool->stratum_port);
 	buf[5 + len] = (port >> 8);
 	buf[6 + len] = (port & 0xff);
@@ -2415,7 +2832,7 @@ static bool socks4_negotiate(struct pool *pool, int sockd, bool socks4a)
 		len = strlen(pool->sockaddr_url);
 		if (len > 255)
 			len = 255;
-		memcpy(&buf[16], pool->sockaddr_url, len);
+		cg_memcpy(&buf[16], pool->sockaddr_url, len);
 		len += 16;
 		buf[len++] = '\0';
 		send(sockd, buf, len, 0);
@@ -2469,7 +2886,7 @@ static bool sock_connecting(void)
 }
 static bool setup_stratum_socket(struct pool *pool)
 {
-	struct addrinfo servinfobase, *servinfo, *hints, *p;
+	struct addrinfo *servinfo, hints, *p;
 	char *sockaddr_url, *sockaddr_port;
 	int sockd;
 
@@ -2480,11 +2897,9 @@ static bool setup_stratum_socket(struct pool *pool)
 	pool->sock = 0;
 	mutex_unlock(&pool->stratum_lock);
 
-	hints = &pool->stratum_hints;
-	memset(hints, 0, sizeof(struct addrinfo));
-	hints->ai_family = AF_UNSPEC;
-	hints->ai_socktype = SOCK_STREAM;
-	servinfo = &servinfobase;
+	memset(&hints, 0, sizeof(struct addrinfo));
+	hints.ai_family = AF_UNSPEC;
+	hints.ai_socktype = SOCK_STREAM;
 
 	if (!pool->rpc_proxy && opt_socks_proxy) {
 		pool->rpc_proxy = opt_socks_proxy;
@@ -2499,7 +2914,7 @@ static bool setup_stratum_socket(struct pool *pool)
 		sockaddr_url = pool->sockaddr_url;
 		sockaddr_port = pool->stratum_port;
 	}
-	if (getaddrinfo(sockaddr_url, sockaddr_port, hints, &servinfo) != 0) {
+	if (getaddrinfo(sockaddr_url, sockaddr_port, &hints, &servinfo) != 0) {
 		if (!pool->probed) {
 			applog(LOG_WARNING, "Failed to resolve (?wrong URL) %s:%s",
 			       sockaddr_url, sockaddr_port);
@@ -2599,9 +3014,7 @@ retry:
 	}
 
 	if (!pool->sockbuf) {
-		pool->sockbuf = calloc(RBUFSIZE, 1);
-		if (!pool->sockbuf)
-			quithere(1, "Failed to calloc pool sockbuf");
+		pool->sockbuf = cgcalloc(RBUFSIZE, 1);
 		pool->sockbuf_size = RBUFSIZE;
 	}
 
@@ -2733,14 +3146,19 @@ resend:
 		goto out;
 	}
 
+	if (sessionid && pool->sessionid && !strcmp(sessionid, pool->sessionid)) {
+		applog(LOG_NOTICE, "Pool %d successfully negotiated resume with the same session ID",
+		       pool->pool_no);
+	}
+
 	cg_wlock(&pool->data_lock);
+	free(pool->nonce1);
+	free(pool->sessionid);
 	pool->sessionid = sessionid;
 	pool->nonce1 = nonce1;
 	pool->n1_len = strlen(nonce1) / 2;
 	free(pool->nonce1bin);
-	pool->nonce1bin = calloc(pool->n1_len, 1);
-	if (unlikely(!pool->nonce1bin))
-		quithere(1, "Failed to calloc pool->nonce1bin");
+	pool->nonce1bin = cgcalloc(pool->n1_len, 1);
 	hex2bin(pool->nonce1bin, pool->nonce1, pool->n1_len);
 	pool->n2size = n2size;
 	cg_wunlock(&pool->data_lock);
@@ -2754,7 +3172,7 @@ out:
 		if (!pool->stratum_url)
 			pool->stratum_url = pool->sockaddr_url;
 		pool->stratum_active = true;
-        pool->next_diff = 0;
+		pool->next_diff = 0;
 		pool->sdiff = 1;
 		if (opt_protocol) {
 			applog(LOG_DEBUG, "Pool %d confirmed mining.subscribe with extranonce1 %s extran2size %d",
@@ -2766,7 +3184,7 @@ out:
 			* does not support it, or does not know how to respond to the
 			* presence of the sessionid parameter. */
 			cg_wlock(&pool->data_lock);
-            free(pool->sessionid);
+			free(pool->sessionid);
 			free(pool->nonce1);
 			pool->sessionid = pool->nonce1 = NULL;
 			cg_wunlock(&pool->data_lock);
@@ -2793,10 +3211,10 @@ bool restart_stratum(struct pool *pool)
 		suspend_stratum(pool);
 	if (!initiate_stratum(pool))
 		goto out;
-    if (pool->extranonce_subscribe && !subscribe_extranonce(pool))
+	if (pool->extranonce_subscribe && !subscribe_extranonce(pool))
 		goto out;
 	if (!auth_stratum(pool))
-		goto out;    
+		goto out;
 	ret = true;
 out:
 	if (!ret)
@@ -2857,11 +3275,7 @@ void *realloc_strcat(char *ptr, char *s)
 		old = strlen(ptr);
 
 	len += old + 1;
-	align_len(&len);
-
-	ret = malloc(len);
-	if (unlikely(!ret))
-		quithere(1, "Failed to malloc");
+	ret = cgmalloc(len);
 
 	if (ptr) {
 		sprintf(ret, "%s%s", ptr, s);
@@ -2888,9 +3302,7 @@ void *str_text(char *ptr)
 
 	uptr = (unsigned char *)ptr;
 
-	ret = txt = malloc(strlen(ptr)*4+5); // Guaranteed >= needed
-	if (unlikely(!txt))
-		quithere(1, "Failed to malloc txt");
+	ret = txt = cgmalloc(strlen(ptr) * 4 + 5); // Guaranteed >= needed
 
 	do {
 		if (*uptr < ' ' || *uptr > '~') {
@@ -3114,9 +3526,7 @@ bool cg_completion_timeout(void *fn, void *fnarg, int timeout)
 	pthread_t pthread;
 	bool ret = false;
 
-	cgc = malloc(sizeof(struct cg_completion));
-	if (unlikely(!cgc))
-		return ret;
+	cgc = cgmalloc(sizeof(struct cg_completion));
 	cgsem_init(&cgc->cgsem);
 	cgc->fn = fn;
 	cgc->fnarg = fnarg;
@@ -3136,7 +3546,17 @@ void _cg_memcpy(void *dest, const void *src, unsigned int n, const char *file, c
 {
 	if (unlikely(n < 1 || n > (1ul << 31))) {
 		applog(LOG_ERR, "ERR: Asked to memcpy %u bytes from %s %s():%d",
-			      n, file, func, line);
+		       n, file, func, line);
+		return;
+	}
+	if (unlikely(!dest)) {
+		applog(LOG_ERR, "ERR: Asked to memcpy %u bytes to NULL from %s %s():%d",
+		       n, file, func, line);
+		return;
+	}
+	if (unlikely(!src)) {
+		applog(LOG_ERR, "ERR: Asked to memcpy %u bytes from NULL from %s %s():%d",
+		       n, file, func, line);
 		return;
 	}
 	memcpy(dest, src, n);
