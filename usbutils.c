@@ -18,6 +18,8 @@
 #include "miner.h"
 #include "usbutils.h"
 
+#define USE_SAM3U   (0)
+
 static pthread_mutex_t cgusb_lock;
 static pthread_mutex_t cgusbres_lock;
 static cglock_t cgusb_fd_lock;
@@ -59,20 +61,19 @@ static cgtimer_t usb11_cgt;
 #define BITFURY_TIMEOUT_MS 999
 #define DRILLBIT_TIMEOUT_MS 999
 #define ICARUS_TIMEOUT_MS 999
+#define BAIKAL_TIMEOUT_MS  999
 
 // There is no windows version
 #define ANT_S1_TIMEOUT_MS 200
 #define ANT_S2_TIMEOUT_MS 200
 
 #ifdef WIN32
-#define BAIKAL_TIMEOUT_MS  999
 /* The safety timeout we use, cancelling async transfers on windows that fail
  * to timeout on their own. */
 #define WIN_CALLBACK_EXTRA 40
 #define WIN_WRITE_CBEXTRA 5000
-#else
-#define BAIKAL_TIMEOUT_MS  999
 #endif
+
 
 #define USB_EPS(_intx, _epinfosx) { \
 		.interface = _intx, \
@@ -94,16 +95,17 @@ static cgtimer_t usb11_cgt;
 static struct list_head ut_list;
 
 #ifdef USE_BAIKAL
-static struct usb_epinfo ltm_epinfos[] = {             
+static struct usb_epinfo ltm_epinfos[] = {
+#if USE_SAM3U
     { LIBUSB_TRANSFER_TYPE_BULK,    64, EPI(1), 0, 0 },
-#if 1   /* SAM3U */
-    { LIBUSB_TRANSFER_TYPE_BULK,    64, EPO(2), 0, 0 } 
-#else   /* STM32 */
-    { LIBUSB_TRANSFER_TYPE_BULK,    64, EPO(3), 0, 0 } 
-#endif 
+    { LIBUSB_TRANSFER_TYPE_BULK,    64, EPO(2), 0, 0 }
+#else
+    { LIBUSB_TRANSFER_TYPE_BULK,    64, EPI(2), 0, 0 },
+    { LIBUSB_TRANSFER_TYPE_BULK,    64, EPO(1), 0, 0 }
+#endif
 };
 
-static struct usb_intinfo ltm_ints[] = {    
+static struct usb_intinfo ltm_ints[] = {
     USB_EPS(1, ltm_epinfos),
     USB_EPS(0, ltm_epinfos)
 };
@@ -123,16 +125,21 @@ static struct usb_intinfo ltm_ints[] = {
 static struct usb_find_devices find_dev[] = {
 #ifdef USE_BAIKAL
     {
-		.drv = DRIVER_baikal,
-		.name = "LTM",
-		.ident = IDENT_BKL,
-		.idVendor = 0x03EB,
-		.idProduct = 0x2404,
-        	.iManufacturer = "LTC Technology",
-		.iProduct = "LTC Miner",
-		.config = 1,
-		.timeout = BAIKAL_TIMEOUT_MS,
-		.latency = LATENCY_UNUSED,
+		.drv        = DRIVER_baikalu,
+		.name       = "BKLU",
+		.ident      = IDENT_BKL,
+#if USE_SAM3U
+		.idVendor   = 0x03EB,
+		.idProduct  = 0x2404,
+#else   /* STM */
+		.idVendor   = 0x0483,
+		.idProduct  = 0x5740,
+#endif
+        .iManufacturer = "MS Technology",
+		.iProduct   = "Baikal Miner",
+		.config     = 1,
+		.timeout    = BAIKAL_TIMEOUT_MS,
+		.latency    = LATENCY_UNUSED,
 		INTINFO(ltm_ints) },
 #endif
 	{ DRIVER_MAX, NULL, 0, 0, 0, NULL, NULL, 0, 0, 0, 0, NULL }
@@ -426,9 +433,7 @@ static void append(char **buf, char *append, size_t *off, size_t *len)
 	if ((new + *off) >= *len)
 	{
 		*len *= 2;
-		*buf = realloc(*buf, *len);
-		if (unlikely(!*buf))
-			quit(1, "USB failed to realloc append");
+		*buf = cgrealloc(*buf, *len);
 	}
 
 	strcpy(*buf + *off, append);
@@ -966,9 +971,7 @@ static void add_in_use(uint8_t bus_number, uint8_t device_address, bool blacklis
 	else
 		head = &in_use_head;
 
-	in_use_tmp = calloc(1, sizeof(*in_use_tmp));
-	if (unlikely(!in_use_tmp))
-		quit(1, "USB failed to calloc in_use_tmp");
+	in_use_tmp = cgcalloc(1, sizeof(*in_use_tmp));
 	in_use_tmp->in_use.bus_number = (int)bus_number;
 	in_use_tmp->in_use.device_address = (int)device_address;
 	in_use_tmp->next = in_use_head;
@@ -1036,9 +1039,7 @@ static bool sgminer_usb_lock_bd(struct device_drv *drv, uint8_t bus_number, uint
 
 	applog(LOG_DEBUG, "USB lock %s %d-%d", drv->dname, (int)bus_number, (int)device_address);
 
-	res_work = calloc(1, sizeof(*res_work));
-	if (unlikely(!res_work))
-		quit(1, "USB failed to calloc lock res_work");
+	res_work = cgcalloc(1, sizeof(*res_work));
 	res_work->lock = true;
 	res_work->dname = (const char *)(drv->dname);
 	res_work->bus_number = bus_number;
@@ -1095,9 +1096,7 @@ static void sgminer_usb_unlock_bd(struct device_drv *drv, uint8_t bus_number, ui
 
 	applog(LOG_DEBUG, "USB unlock %s %d-%d", drv->dname, (int)bus_number, (int)device_address);
 
-	res_work = calloc(1, sizeof(*res_work));
-	if (unlikely(!res_work))
-		quit(1, "USB failed to calloc unlock res_work");
+	res_work = cgcalloc(1, sizeof(*res_work));
 	res_work->lock = false;
 	res_work->dname = (const char *)(drv->dname);
 	res_work->bus_number = bus_number;
@@ -1280,9 +1279,7 @@ struct cgpu_info *usb_copy_cgpu(struct cgpu_info *orig)
 
 	DEVWLOCK(orig, pstate);
 
-	copy = calloc(1, sizeof(*copy));
-	if (unlikely(!copy))
-		quit(1, "Failed to calloc cgpu for %s in usb_copy_cgpu", orig->drv->dname);
+	copy = cgcalloc(1, sizeof(*copy));
 
 	copy->name = orig->name;
 	copy->drv = copy_drv(orig->drv);
@@ -1294,19 +1291,16 @@ struct cgpu_info *usb_copy_cgpu(struct cgpu_info *orig)
 	cg_memcpy(&(copy->usbinfo), &(orig->usbinfo), sizeof(copy->usbinfo));
 
 	copy->usbinfo.nodev = (copy->usbdev == NULL);
-	
+
 	DEVWUNLOCK(orig, pstate);
-	DEVWUNLOCK(copy, pstate); 
+	DEVWUNLOCK(copy, pstate);
 
 	return copy;
 }
 
 struct cgpu_info *usb_alloc_cgpu(struct device_drv *drv, int threads)
 {
-	struct cgpu_info *cgpu = calloc(1, sizeof(*cgpu));
-
-	if (unlikely(!cgpu))
-		quit(1, "Failed to calloc cgpu for %s in usb_alloc_cgpu", drv->dname);
+	struct cgpu_info *cgpu = cgcalloc(1, sizeof(*cgpu));
 
 	cgpu->drv = drv;
 	cgpu->deven = DEV_ENABLED;
@@ -1337,6 +1331,7 @@ struct cgpu_info *usb_free_cgpu(struct cgpu_info *cgpu)
 
 static int _usb_init(struct cgpu_info *cgpu, struct libusb_device *dev, struct usb_find_devices *found)
 {
+	unsigned char man[STRBUFLEN+1], prod[STRBUFLEN+1];
 	struct cg_usb_device *cgusb = NULL;
 	struct libusb_config_descriptor *config = NULL;
 	const struct libusb_interface_descriptor *idesc;
@@ -1346,7 +1341,7 @@ static int _usb_init(struct cgpu_info *cgpu, struct libusb_device *dev, struct u
 	char devstr[STRBUFLEN+1];
 	int err, ifinfo, epinfo, alt, epnum, pstate;
 	int bad = USB_INIT_FAIL;
-	int cfg, claimed = 0;
+	int cfg, claimed = 0, i;
 
 	DEVWLOCK(cgpu, pstate);
 
@@ -1368,9 +1363,7 @@ static int _usb_init(struct cgpu_info *cgpu, struct libusb_device *dev, struct u
 
 	snprintf(devstr, sizeof(devstr), "- %s device %s", found->name, devpath);
 
-	cgusb = calloc(1, sizeof(*cgusb));
-	if (unlikely(!cgusb))
-		quit(1, "USB failed to calloc _usb_init cgusb");
+	cgusb = cgcalloc(1, sizeof(*cgusb));
 	cgusb->found = found;
 
 	if (found->idVendor == IDVENDOR_FTDI)
@@ -1378,9 +1371,7 @@ static int _usb_init(struct cgpu_info *cgpu, struct libusb_device *dev, struct u
 
 	cgusb->ident = found->ident;
 
-	cgusb->descriptor = calloc(1, sizeof(*(cgusb->descriptor)));
-	if (unlikely(!cgusb->descriptor))
-		quit(1, "USB failed to calloc _usb_init cgusb descriptor");
+	cgusb->descriptor = cgcalloc(1, sizeof(*(cgusb->descriptor)));
 
 	err = libusb_get_device_descriptor(dev, cgusb->descriptor);
 	if (err) {
@@ -1440,18 +1431,16 @@ static int _usb_init(struct cgpu_info *cgpu, struct libusb_device *dev, struct u
 	}
 #endif
 
+	err = libusb_get_string_descriptor_ascii(cgusb->handle,
+							cgusb->descriptor->iManufacturer,
+							man, STRBUFLEN);
+	if (err < 0) {
+		applog(LOG_DEBUG,
+			"USB init, failed to get iManufacturer, err %d %s",
+			err, devstr);
+		goto cldame;
+	}
 	if (found->iManufacturer) {
-		unsigned char man[STRBUFLEN+1];
-
-		err = libusb_get_string_descriptor_ascii(cgusb->handle,
-							 cgusb->descriptor->iManufacturer,
-							 man, STRBUFLEN);
-		if (err < 0) {
-			applog(LOG_DEBUG,
-				"USB init, failed to get iManufacturer, err %d %s",
-				err, devstr);
-			goto cldame;
-		}
 		if (strcmp((char *)man, found->iManufacturer)) {
 			applog(LOG_DEBUG, "USB init, iManufacturer mismatch %s",
 			       devstr);
@@ -1459,26 +1448,59 @@ static int _usb_init(struct cgpu_info *cgpu, struct libusb_device *dev, struct u
 			bad = USB_INIT_IGNORE;
 			goto cldame;
 		}
+	} else {
+		for (i = 0; find_dev[i].drv != DRIVER_MAX; i++) {
+			const char *iManufacturer = find_dev[i].iManufacturer;
+			/* If other drivers has an iManufacturer set that match,
+			 * don't try to claim this device. */
+
+			if (!iManufacturer)
+				continue;
+			/* If the alternative driver also has an iProduct, only
+			 * use that for comparison. */
+			if (find_dev[i].iProduct)
+				continue;
+			if (!strcmp((char *)man, iManufacturer)) {
+				applog(LOG_DEBUG, "USB init, alternative iManufacturer match %s",
+				       devstr);
+				applog(LOG_DEBUG, "Found %s", iManufacturer);
+				bad = USB_INIT_IGNORE;
+				goto cldame;
+			}
+		}
 	}
 
+	err = libusb_get_string_descriptor_ascii(cgusb->handle,
+							cgusb->descriptor->iProduct,
+							prod, STRBUFLEN);
+	if (err < 0) {
+		applog(LOG_DEBUG,
+			"USB init, failed to get iProduct, err %d %s",
+			err, devstr);
+		goto cldame;
+	}
 	if (found->iProduct) {
-		unsigned char prod[STRBUFLEN+1];
-
-		err = libusb_get_string_descriptor_ascii(cgusb->handle,
-							 cgusb->descriptor->iProduct,
-							 prod, STRBUFLEN);
-		if (err < 0) {
-			applog(LOG_DEBUG,
-				"USB init, failed to get iProduct, err %d %s",
-				err, devstr);
-			goto cldame;
-		}
-		if (strcmp((char *)prod, found->iProduct)) {
+		if (strcasecmp((char *)prod, found->iProduct)) {
 			applog(LOG_DEBUG, "USB init, iProduct mismatch %s",
 			       devstr);
 			applog(LOG_DEBUG, "Found %s vs %s", prod, found->iProduct);
 			bad = USB_INIT_IGNORE;
 			goto cldame;
+		}
+	} else {
+		for (i = 0; find_dev[i].drv != DRIVER_MAX; i++) {
+			const char *iProduct = find_dev[i].iProduct;
+			/* Do same for iProduct as iManufacturer above */
+
+			if (!iProduct)
+				continue;
+			if (!strcasecmp((char *)prod, iProduct)) {
+				applog(LOG_DEBUG, "USB init, alternative iProduct match %s",
+				       devstr);
+				applog(LOG_DEBUG, "Found %s", iProduct);
+				bad = USB_INIT_IGNORE;
+				goto cldame;
+			}
 		}
 	}
 
@@ -1638,7 +1660,7 @@ static int _usb_init(struct cgpu_info *cgpu, struct libusb_device *dev, struct u
 
 	// Allow a name change based on the idVendor+idProduct
 	// N.B. must be done before calling add_cgpu()
-	if (strcmp(cgpu->drv->name, found->name)) {
+	if (strcasecmp(cgpu->drv->name, found->name)) {
 		if (!cgpu->drv->copy)
 			cgpu->drv = copy_drv(cgpu->drv);
 		cgpu->drv->name = (char *)(found->name);
@@ -1687,9 +1709,7 @@ bool usb_init(struct cgpu_info *cgpu, struct libusb_device *dev, struct usb_find
 		if (find_dev[i].drv == found_match->drv &&
 		    find_dev[i].idVendor == found_match->idVendor &&
 		    find_dev[i].idProduct == found_match->idProduct) {
-			found_use = malloc(sizeof(*found_use));
-			if (unlikely(!found_use))
-				quit(1, "USB failed to malloc found_use");
+			found_use = cgmalloc(sizeof(*found_use));
 			cg_memcpy(found_use, &(find_dev[i]), sizeof(*found_use));
 
 			ret = _usb_init(cgpu, dev, found_use);
@@ -1763,9 +1783,7 @@ static struct usb_find_devices *usb_check_each(int drvnum, struct device_drv *dr
 	for (i = 0; find_dev[i].drv != DRIVER_MAX; i++)
 		if (find_dev[i].drv == drvnum) {
 			if (usb_check_device(drv, dev, &(find_dev[i]))) {
-				found = malloc(sizeof(*found));
-				if (unlikely(!found))
-					quit(1, "USB failed to malloc found");
+				found = cgmalloc(sizeof(*found));
 				cg_memcpy(found, &(find_dev[i]), sizeof(*found));
 				return found;
 			}
@@ -1994,15 +2012,10 @@ static void newstats(struct cgpu_info *cgpu)
 
 	cgpu->usbinfo.usbstat = next_stat + 1;
 
-	usb_stats = realloc(usb_stats, sizeof(*usb_stats) * (next_stat+1));
-	if (unlikely(!usb_stats))
-		quit(1, "USB failed to realloc usb_stats %d", next_stat+1);
-
+	usb_stats = cgrealloc(usb_stats, sizeof(*usb_stats) * (next_stat+1));
 	usb_stats[next_stat].name = cgpu->drv->name;
 	usb_stats[next_stat].device_id = -1;
-	usb_stats[next_stat].details = calloc(2, sizeof(struct cg_usb_stats_details) * (C_MAX + 1));
-	if (unlikely(!usb_stats[next_stat].details))
-		quit(1, "USB failed to calloc details for %d", next_stat+1);
+	usb_stats[next_stat].details = cgcalloc(2, sizeof(struct cg_usb_stats_details) * (C_MAX + 1));
 
 	for (i = 1; i < C_MAX * 2; i += 2)
 		usb_stats[next_stat].details[i].seq = 1;
@@ -2287,6 +2300,12 @@ usb_perform_transfer(struct cgpu_info *cgpu, struct cg_usb_device *usbdev, int i
 	interrupt = usb_epinfo->att == LIBUSB_TRANSFER_TYPE_INTERRUPT;
 	endpoint = usb_epinfo->ep;
 
+	if (unlikely(!data)) {
+		applog(LOG_ERR, "USB error: usb_perform_transfer sent NULL data (%s,intinfo=%d,epinfo=%d,length=%d,timeout=%u,mode=%d,cmd=%s,seq=%d) endpoint=%d",
+		       cgpu->drv->name, intinfo, epinfo, length, timeout, mode, usb_cmdname(cmd), seq, (int)endpoint);
+		err = LIBUSB_ERROR_IO;
+		goto out_fail;
+	}
 	/* Avoid any async transfers during shutdown to allow the polling
 	 * thread to be shut down after all existing transfers are complete */
 	if (opt_lowmem || cgpu->shutdown)
@@ -2300,7 +2319,7 @@ err_retry:
 		/* Older versions may not have this feature so only enable it
 		 * when we know we're compiling with included static libusb. We
 		 * only do this for bulk transfer, not interrupt. */
-		if (!interrupt)
+		if (!cgpu->nozlp && !interrupt)
 			ut.transfer->flags |= LIBUSB_TRANSFER_ADD_ZERO_PACKET;
 #endif
 #ifdef WIN32
@@ -2360,6 +2379,7 @@ err_retry:
 	}
 	if (err == LIBUSB_ERROR_IO && ++err_retries < USB_RETRY_MAX)
 		goto err_retry;
+out_fail:
 	if (NODEV(err))
 		*transferred = 0;
 	else if ((endpoint & LIBUSB_ENDPOINT_DIR_MASK) == LIBUSB_ENDPOINT_IN && *transferred)
@@ -2968,7 +2988,7 @@ void usb_cleanup(void)
 	for (i = 0; i < total_devices; i++) {
 		cgpu = devices[i];
 		switch (cgpu->drv->drv_id) {
-			case DRIVER_baikal:
+			case DRIVER_baikalu:
 				DEVWLOCK(cgpu, pstate);
 				release_cgpu(cgpu);
 				DEVWUNLOCK(cgpu, pstate);
@@ -3067,10 +3087,7 @@ void usb_initialise(void)
 						quit(1, "Invalid --usb bus:dev - dev must be > 0 or '*'");
 				}
 
-				busdev = realloc(busdev, sizeof(*busdev) * (++busdev_count));
-				if (unlikely(!busdev))
-					quit(1, "USB failed to realloc busdev");
-
+				busdev = cgrealloc(busdev, sizeof(*busdev) * (++busdev_count));
 				busdev[busdev_count-1].bus_number = bus;
 				busdev[busdev_count-1].device_address = dev;
 
@@ -3144,9 +3161,7 @@ static LPSECURITY_ATTRIBUTES mksec(const char *dname, uint8_t bus_number, uint8_
 	LPSECURITY_ATTRIBUTES sec_att = NULL;
 	PSECURITY_DESCRIPTOR sec_des = NULL;
 
-	sec_des = malloc(sizeof(*sec_des));
-	if (unlikely(!sec_des))
-		quit(1, "MTX: Failed to malloc LPSECURITY_DESCRIPTOR");
+	sec_des = cgmalloc(sizeof(*sec_des));
 
 	if (!InitializeSecurityDescriptor(sec_des, SECURITY_DESCRIPTOR_REVISION)) {
 		applog(LOG_ERR,
@@ -3185,9 +3200,7 @@ static LPSECURITY_ATTRIBUTES mksec(const char *dname, uint8_t bus_number, uint8_
 		return NULL;
 	}
 
-	sec_att = malloc(sizeof(*sec_att));
-	if (unlikely(!sec_att))
-		quit(1, "MTX: Failed to malloc LPSECURITY_ATTRIBUTES");
+	sec_att = cgmalloc(sizeof(*sec_att));
 
 	sec_att->nLength = sizeof(*sec_att);
 	sec_att->lpSecurityDescriptor = sec_des;
@@ -3375,9 +3388,7 @@ static void resource_process()
 				(int)res_work_head->device_address,
 				ok);
 
-		res_reply = calloc(1, sizeof(*res_reply));
-		if (unlikely(!res_reply))
-			quit(1, "USB failed to calloc res_reply");
+		res_reply = cgcalloc(1, sizeof(*res_reply));
 
 		res_reply->bus_number = res_work_head->bus_number;
 		res_reply->device_address = res_work_head->device_address;
