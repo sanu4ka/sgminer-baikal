@@ -693,11 +693,6 @@ char* set_int_1_to_65535(const char *arg, int *i)
     return (set_int_range(arg, i, 1, 65535));
 }
 
-char* set_int_0_to_10(const char *arg, int *i)
-{
-    return (set_int_range(arg, i, 0, 10));
-}
-
 char* set_int_1_to_10(const char *arg, int *i)
 {
     return (set_int_range(arg, i, 1, 10));
