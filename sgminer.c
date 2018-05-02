@@ -181,7 +181,7 @@ char *opt_baikal_fan = NULL;
 //enum cl_kernels opt_baikal_kernel = KL_X11;
 //char *opt_baikal_algo = X11_KERNNAME;
 static int total_algo;
-bool opt_enable_nicehash_sma;
+bool opt_enable_nicehash_sma = false;
 static int nicehash_sma_thr_id;
 #endif
 
@@ -6999,6 +6999,7 @@ static void apply_initial_baikal_settings(struct pool *pool)
     //manually apply algorithm    
     for (i = 0; i < mining_threads; i++) {
         mining_thr[i]->cgpu->algorithm = pool->algorithm;
+        mining_thr[i]->cgpu->total_mhashes = 0;
         applog(LOG_DEBUG, "Set Miner %d to %s", i, isnull(pool->algorithm.name, ""));
         /* TODO : */
     }
@@ -7535,143 +7536,8 @@ static void get_work_prepare_thread(struct thr_info *mythr, struct work *work)
         zero_stats();
 
         //apply switcher options
-        apply_switcher_options(pool_switch_options, work->pool);
-
-        //devices
-        /*if(opt_isset(pool_switch_options, SWITCHER_APPLY_DEVICE))
-        {
-          //reset devices flags
-          opt_devs_enabled = 0;
-          for (i = 0; i < MAX_DEVICES; i++)
-              devices_enabled[i] = false;
-    
-          //assign pool devices if any
-          if(!empty_string((opt = get_pool_setting(work->pool->devices, ((!empty_string(default_profile.devices))?default_profile.devices:"all"))))) {
-            set_devices((char *)opt);
-          }
-        }
-    
-        //lookup gap
-        if(opt_isset(pool_switch_options, SWITCHER_APPLY_LG))
-        {
-          if(!empty_string((opt = get_pool_setting(work->pool->lookup_gap, default_profile.lookup_gap))))
-            set_lookup_gap((char *)opt);
-        }
-    
-        //raw intensity from pool
-        if(opt_isset(pool_switch_options, SWITCHER_APPLY_RAWINT))
-        {
-          applog(LOG_DEBUG, "Switching to rawintensity: pool = %s, default = %s", work->pool->rawintensity, default_profile.rawintensity);
-          opt = get_pool_setting(work->pool->rawintensity, default_profile.rawintensity);
-          applog(LOG_DEBUG, "rawintensity -> %s", opt);
-          set_rawintensity(opt);
-        }
-        //xintensity
-        else if(opt_isset(pool_switch_options, SWITCHER_APPLY_XINT))
-        {
-          applog(LOG_DEBUG, "Switching to xintensity: pool = %s, default = %s", work->pool->xintensity, default_profile.xintensity);
-          opt = get_pool_setting(work->pool->xintensity, default_profile.xintensity);
-          applog(LOG_DEBUG, "xintensity -> %s", opt);
-          set_xintensity(opt);
-        }
-        //intensity
-        else if(opt_isset(pool_switch_options, SWITCHER_APPLY_INT))
-        {
-          applog(LOG_DEBUG, "Switching to intensity: pool = %s, default = %s", work->pool->intensity, default_profile.intensity);
-          opt = get_pool_setting(work->pool->intensity, default_profile.intensity);
-          applog(LOG_DEBUG, "intensity -> %s", opt);
-          set_intensity(opt);
-        }
-        //default basic intensity
-        else if(opt_isset(pool_switch_options, SWITCHER_APPLY_INT8))
-        {
-          default_profile.intensity = strdup("8");
-          set_intensity(default_profile.intensity);
-        }
-    
-        //shaders
-        if(opt_isset(pool_switch_options, SWITCHER_APPLY_SHADER))
-        {
-          if(!empty_string((opt = get_pool_setting(work->pool->shaders, default_profile.shaders))))
-            set_shaders((char *)opt);
-        }
-    
-        //thread-concurrency
-        if(opt_isset(pool_switch_options, SWITCHER_APPLY_TC))
-        {
-          // neoscrypt - if not specified set TC to 0 so that TC will be calculated by intensity settings
-          if (work->pool->algorithm.type == ALGO_NEOSCRYPT) {
-            opt = ((empty_string(work->pool->thread_concurrency))?"0":get_pool_setting(work->pool->thread_concurrency, default_profile.thread_concurrency));
-          }
-          // otherwise use pool/profile setting or default to default profile setting
-          else {
-            opt = get_pool_setting(work->pool->thread_concurrency, default_profile.thread_concurrency);
-          }
-    
-          if(!empty_string(opt)) {
-            set_thread_concurrency((char *)opt);
-          }
-        }
-    
-        //worksize
-        if(opt_isset(pool_switch_options, SWITCHER_APPLY_WORKSIZE))
-        {
-          if(!empty_string((opt = get_pool_setting(work->pool->worksize, default_profile.worksize))))
-            set_worksize(opt);
-        }
-    
-        #ifdef HAVE_ADL
-          //GPU clock
-          if(opt_isset(pool_switch_options, SWITCHER_APPLY_GPU_ENGINE))
-          {
-            if(!empty_string((opt = get_pool_setting(work->pool->gpu_engine, default_profile.gpu_engine))))
-              set_gpu_engine((char *)opt);
-          }
-    
-          //GPU memory clock
-          if(opt_isset(pool_switch_options, SWITCHER_APPLY_GPU_MEMCLOCK))
-          {
-            if(!empty_string((opt = get_pool_setting(work->pool->gpu_memclock, default_profile.gpu_memclock))))
-              set_gpu_memclock((char *)opt);
-          }
-    
-          //GPU fans
-          if(opt_isset(pool_switch_options, SWITCHER_APPLY_GPU_FAN))
-          {
-            if(!empty_string((opt = get_pool_setting(work->pool->gpu_fan, default_profile.gpu_fan))))
-              set_gpu_fan((char *)opt);
-          }
-    
-          //GPU powertune
-          if(opt_isset(pool_switch_options, SWITCHER_APPLY_GPU_POWERTUNE))
-          {
-            if(!empty_string((opt = get_pool_setting(work->pool->gpu_powertune, default_profile.gpu_powertune))))
-              set_gpu_powertune((char *)opt);
-          }
-    
-          //GPU vddc
-          if(opt_isset(pool_switch_options, SWITCHER_APPLY_GPU_VDDC))
-          {
-            if(!empty_string((opt = get_pool_setting(work->pool->gpu_vddc, default_profile.gpu_vddc))))
-              set_gpu_vddc((char *)opt);
-          }
-    
-          //apply gpu settings
-          for (i = 0; i < nDevs; i++)
-          {
-            if(opt_isset(pool_switch_options, SWITCHER_APPLY_GPU_ENGINE))
-              set_engineclock(i, gpus[i].min_engine);
-            if(opt_isset(pool_switch_options, SWITCHER_APPLY_GPU_MEMCLOCK))
-              set_memoryclock(i, gpus[i].gpu_memclock);
-            if(opt_isset(pool_switch_options, SWITCHER_APPLY_GPU_FAN))
-              set_fanspeed(i, gpus[i].min_fan);
-            if(opt_isset(pool_switch_options, SWITCHER_APPLY_GPU_POWERTUNE))
-              set_powertune(i, gpus[i].gpu_powertune);
-            if(opt_isset(pool_switch_options, SWITCHER_APPLY_GPU_VDDC))
-              set_vddc(i, gpus[i].gpu_vddc);
-          }
-        #endif
-      */
+        apply_switcher_options(pool_switch_options, work->pool);        
+        
         // Change algorithm for each thread (thread_prepare calls initCl)
         if (opt_isset(pool_switch_options, SWITCHER_SOFT_RESET))
             applog(LOG_DEBUG, "Soft Reset... Restarting threads...");
@@ -7703,10 +7569,8 @@ static void get_work_prepare_thread(struct thr_info *mythr, struct work *work)
             applog(LOG_DEBUG, "Hard Reset Mining Threads...");
 
             //if devices changed... enable/disable as needed
-#ifdef USE_GPU
             if (opt_isset(pool_switch_options, SWITCHER_APPLY_DEVICE))
                 enable_devices();
-#endif
 
             //figure out how many mining threads we'll need
             unsigned int n_threads = 0;
@@ -9462,7 +9326,7 @@ static void hotplug_process(void)
         cgpu->thr = cgmalloc(sizeof(*cgpu->thr) * (cgpu->threads + 1));
         cgpu->thr[cgpu->threads] = NULL;
         cgpu->status = LIFE_INIT;
-        cgtime(&(cgpu->dev_start_tv));
+        //cgtime(&(cgpu->dev_start_tv));
 
         for (j = 0; j < cgpu->threads; ++j) {
             thr = mining_thr[mining_threads];
@@ -9679,6 +9543,7 @@ static void restart_mining_threads(unsigned int new_n_threads)
         cgpu->thr = (struct thr_info **)malloc(sizeof(struct thr_info *) * (cgpu->threads + 1));
         cgpu->thr[cgpu->threads] = NULL;
         cgpu->status = LIFE_INIT;
+ 
 
         if (cgpu->deven == DEV_DISABLED && opt_removedisabled) {
             cgpu->threads = 0;
@@ -10098,6 +9963,7 @@ int main(int argc, char *argv[] )
         cgpu->thr = cgmalloc(sizeof(*cgpu->thr) * (cgpu->threads + 1));
         cgpu->thr[cgpu->threads] = NULL;
         cgpu->status = LIFE_INIT;
+        //cgtime(&(cgpu->dev_start_tv));
 
         for (j = 0; j < cgpu->threads; ++j, ++k) {
             thr = mining_thr[k];
@@ -10539,4 +10405,3 @@ void* nicehash_sma_thread(void *userdata)
     }
 }
 
-        
