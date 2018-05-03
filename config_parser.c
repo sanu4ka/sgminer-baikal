@@ -1025,9 +1025,9 @@ void apply_pool_profile(struct pool *pool)
             pool->algorithm = profile->algorithm;
         else
             pool->algorithm = default_profile.algorithm;
+         applog(LOG_DEBUG, "Pool %i Algorithm set to \"%s\"", pool->pool_no, pool->algorithm.name);
     }
-    applog(LOG_DEBUG, "Pool %i Algorithm set to \"%s\"", pool->pool_no, pool->algorithm.name);
-
+   
     // if the pool doesn't have a specific kernel file...
     if (empty_string(pool->algorithm.kernelfile)) {
         // ...but profile does, apply it to the pool
