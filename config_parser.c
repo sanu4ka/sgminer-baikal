@@ -1804,7 +1804,7 @@ void write_config(const char *filename)
                 }
                 //numeric types
                 else if (opt->type & OPT_HASARG &&
-                         ((void *)opt->cb_arg == (void *)set_int_0_to_9999 ||
+                          (void *)opt->cb_arg == (void *)set_int_0_to_9999 ||
                           (void *)opt->cb_arg == (void *)set_int_1_to_65535 ||
                           (void *)opt->cb_arg == (void *)set_int_0_to_10 ||
                           (void *)opt->cb_arg == (void *)set_int_1_to_10) && opt->desc != opt_hidden) {
